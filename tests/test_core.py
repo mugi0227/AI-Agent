@@ -134,13 +134,13 @@ class StorageTests(Fixture):
 
 class IngestionTests(Fixture):
     def test_path_outside(self):
-        p = self.base / "outside.txt"; p.write_text("秘密")
+        p = self.base / "outside.txt"; p.write_text("秘密", encoding="utf-8")
         self.assertCode("PATH_NOT_ALLOWED", self.ingest.file, p)
     def test_state_blocked(self):
-        self.cfg.roots.append(str(self.home)); p = self.home / "private.txt"; p.write_text("秘密")
+        self.cfg.roots.append(str(self.home)); p = self.home / "private.txt"; p.write_text("秘密", encoding="utf-8")
         self.assertCode("STATE_DIRECTORY_BLOCKED", self.ingest.file, p)
     def test_symlink_blocked(self):
-        target = self.base / "outside.txt"; target.write_text("秘密")
+        target = self.base / "outside.txt"; target.write_text("秘密", encoding="utf-8")
         p = self.root / "link.txt"
         try: p.symlink_to(target)
         except (OSError, NotImplementedError): self.skipTest("Symlink privilege unavailable")
@@ -273,7 +273,7 @@ class TransportTests(Fixture):
     def test_capture_url_redaction(self):
         result=capture({"operation":"capture","url":"https://example.invalid/a?token=secret#x","title":"資料","text":"確認した文章","scope":"selection"}, self.cfg,self.home,"chrome-extension://"+"a"*32+"/")
         self.assertEqual(result["status"],"saved_locally")
-        raw=json.loads(next((self.home/"captures").glob("*.json")).read_text())
+        raw=json.loads(next((self.home/"captures").glob("*.json")).read_text(encoding="utf-8"))
         self.assertEqual(raw["source_url"],"https://example.invalid/a")
     def test_capture_disallowed_origin(self): self.assertCode("NATIVE_ORIGIN_BLOCKED", capture, {"operation":"ping"},self.cfg,self.home,"chrome-extension://"+"b"*32+"/")
     def test_capture_disallowed_host(self): self.assertCode("WEB_HOST_BLOCKED", safe_web_url, "https://attacker.invalid", self.cfg.allowed_web_hosts)

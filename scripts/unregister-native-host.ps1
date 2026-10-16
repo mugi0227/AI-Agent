@@ -1,4 +1,10 @@
+param(
+  [ValidateSet('Edge', 'Chrome')][string]$Browser = 'Edge'
+)
 $ErrorActionPreference = 'Stop'
-$key = 'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.workassistant.capture'
+$key = switch ($Browser) {
+  'Edge' { 'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.workassistant.capture' }
+  'Chrome' { 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.workassistant.capture' }
+}
 if (Test-Path $key) { Remove-Item $key }
-Write-Output 'Native host registration removed. Local data and executable were not deleted.'
+Write-Output "$Browser native host registration removed. Local data and executable were not deleted."

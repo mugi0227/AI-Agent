@@ -12,9 +12,9 @@
 
 ## ソース一式の受け取りとリポジトリ状態
 
-この納品時点では、GitHubの`mugi0227/AI-Agent`に反映されたのは詳細設計コミット`827315bbd79eed338c78aa1c71b4c0518afa636f`だけです。ChatGPT側の実装一式の書き込みはツールの安全確認でブロックされました。完成したローカルソースは提供ZIPにあります。GitHubにコードがないことを実装が存在しないことと混同しないでください。
+GitHubの`mugi0227/AI-Agent`の`main`に実装一式があります。初回インポートは`3caa5153487df69f852268f244e7963d821a11a3`、詳細設計先行コミットは`827315bbd79eed338c78aa1c71b4c0518afa636f`です。現在のChrome対応などの変更を含む最新の`main`を取得してください。
 
-提供ZIPを別フォルダに展開し、`SHA256SUMS.txt`とファイル内容を確認してください。社内でこのコードの取り込みとGitHubへの書き込みが許可されていることを確認したうえで、通常の開発手順でリポジトリを取得し、未コミット変更を保護し、作業ブランチへ差分を統合してください。`.git`を上書きしたり、force pushで更新を消したりしないでください。既に別の変更がある場合は差分を比較して統合し、設計先行の履歴を残してください。
+リポジトリまたは提供ZIPの`SHA256SUMS.txt`とファイル内容を確認してください。社内でコードの取り込みが許可されている場合にリポジトリを取得し、未コミット変更を保護して作業ブランチで検証してください。古いZIPで最新のChrome対応を上書きしないでください。`.git`を上書きしたり、force pushで更新を消したりせず、既に別の変更があれば差分を比較して統合してください。
 
 まずソースZIPだけでテストと架空データの動作確認ができます。GitHubの利用が禁止されている場合は社内の承認済み作業領域で進め、外部への書き込みは行わないでください。パッケージ内のコードとドキュメントだけが公開対象です。実データや現地診断結果は含めません。
 
@@ -23,7 +23,7 @@
 1. `git status`、Python/Node/Git/Windowsのバージョンを確認。未コミット変更を破壊しない。作業ブランチ`company-validation`を作る。
 2. このCodex環境自身に業務情報を見せてよいか確認。認められていなければ架空データのみで検証し、実データ閲覧を人に引き継ぐ。
 3. `%LOCALAPPDATA%\WorkAssistant`がBox/OneDrive/共有フォルダでないこと、ACLが本人・管理者等の会社所定の範囲であることを確認。アクセス権を独断で広げない。
-4. ローカル保存、Bedrock送信、推論処理地域、Edge拡張/ローカルバイナリ、Power Automateデータ移送の承認をそれぞれ確認。承認を得る前に該当フラグをONにしない。
+4. ローカル保存、Bedrock送信、推論処理地域、Chrome・Edge拡張/ローカルバイナリ、Power Automateデータ移送の承認をそれぞれ確認。承認を得る前に該当フラグをONにしない。
 5. 認証情報・環境変数の全量出力をしない。AWSキーやSSOキャッシュ、M365 Cookieを読んだりログに出したりしない。
 
 ## 1. ローカル基本機能を判定
@@ -72,17 +72,19 @@ FAIL時: 拡張子・エンコーディング・ファイル実体・許可ル�
 - リージョン要件不一致: 別地域へ自動切替せず停止。会社が許可するモデルに明示変更して再テスト。
 - 429: 呼出頻度・出力上限・同時実行を減らし、回数上限付き再試行のみ。無限リトライ禁止。
 
-## 4. Edge「今見ている情報を渡す」を判定
+## 4. Chrome・Edge「今見ている情報を渡す」を判定
 
 まず拡張sideload/社内配布とNative Messagingの許可を確認する。禁止ならそこでBLOCKED_POLICY、手動コピー/承認済み保存を案内する。
 
-許可される場合: extensionフォルダをEdgeで読み込み、実際の拡張IDをconfig.extension_idsへ設定。本体allowed_web_hostsと拡張のホスト一覧を完全一致で登録。ページの全常時監視ではなく明示操作だけで試す。
+許可される場合: 共通のextensionフォルダをChrome/Edgeで読み込み、各ブラウザの実際の拡張IDをconfig.extension_idsへ設定。本体allowed_web_hostsと拡張のホスト一覧を完全一致で登録。ページの全常時監視ではなく明示操作だけで試す。詳細は`extension/README.md`を参照。
 
 ```powershell
-.\scripts\register-native-host.ps1 -ExtensionId '<実際の32文字ID>' -PythonExe '.\.venv\Scripts\python.exe'
+.\scripts\register-native-host.ps1 -Browser Chrome -ExtensionId '<Chromeの32文字ID>' -PythonExe '.\.venv\Scripts\python.exe'
+# Edgeも使う場合はEdgeのIDで別途登録
+.\scripts\register-native-host.ps1 -Browser Edge -ExtensionId '<Edgeの32文字ID>' -PythonExe '.\.venv\Scripts\python.exe'
 ```
 
-スクリプトはHKCUのみを登録し、Windowsの既存.NET Frameworkコンパイラで固定用途のstdioリレーを作る。csc/バイナリがEDRや署名ポリシーで拒否されれば停止。許可された署名済み社内ビルドへの変更は可能だが、別シェルやExecutionPolicy Bypassで回避しない。
+スクリプトはブラウザ別のHKCUのみを登録し、Windowsの既存.NET Frameworkコンパイラで固定用途のstdioリレーを作る。manifestとlauncherは`native/chrome`・`native/edge`で独立し、片方の登録・解除はもう片方へ影響しない。csc/バイナリがEDRや署名ポリシーで拒否されれば停止。許可された署名済み社内ビルドへの変更は可能だが、別シェルやExecutionPolicy Bypassで回避しない。
 
 PASS条件: Ping成功、日本語改行を含むselectionをプレビューして送信→local captures JSON→DB→検索で一致。通常の同期フォルダを経由していない。URL query/fragmentが除去され、Cookie、入力欄、パスワードを読んでいない。許可外host/別extensionIDを拒否。GUI終了中もローカル保存はでき、GUI起動後に取り込まれる。
 

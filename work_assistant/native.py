@@ -1,4 +1,4 @@
-"""One explicit Edge capture per process; no server, credentials, or arbitrary execution."""
+"""One explicit Chrome/Edge capture per process; no server or arbitrary execution."""
 from __future__ import annotations
 
 import argparse
@@ -64,6 +64,7 @@ def capture(raw: dict, cfg: Settings, home: Path, origin: str) -> dict:
     title = bounded_text(raw["title"], "title", 1000)
     text = bounded_text(raw["text"], "text", min(60000, cfg.max_document_chars))
     now, event_id = now_utc(), str(uuid.uuid4())
+    # Preserve the legacy source ID prefix for existing captures from either browser.
     envelope = {"schema_version": 1, "event_id": event_id, "kind": "capture",
                 "source_id": "edge:" + digest(url + "\n" + text), "title": title, "content": text,
                 "content_type": "text/plain", "source_url": url, "source_modified_at": stamp(now),

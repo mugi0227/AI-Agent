@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Work Assistant Capture",
-  "version": "0.1.0",
-  "description": "明示操作で選択文をプレビューし、会社PC内の秘書へ渡します。",
+  "version": "0.1.1",
+  "description": "Chrome・Edge共通。明示操作で選択文をプレビューし、会社PC内の秘書へ渡します。",
   "permissions": ["activeTab", "scripting", "nativeMessaging", "storage"],
   "action": {"default_popup": "popup.html", "default_title": "この情報を秘書へ渡す"},
   "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}

@@ -1,6 +1,6 @@
 # 実装・検証状況
 
-2026-10-16時点。**実装コードは提供ZIP内。GitHubへの実装書き込みはブロックされ、設計書のみ反映済みです。** 実装前の詳細設計コミットは`827315bbd79eed338c78aa1c71b4c0518afa636f`。
+2026-10-16時点。**実装一式はGitHubの`main`へ反映済みです。** 初回インポートは`3caa5153487df69f852268f244e7963d821a11a3`。実装前の詳細設計コミットは`827315bbd79eed338c78aa1c71b4c0518afa636f`。利用者向けの評価は[完成度レビュー](READINESS_REVIEW.md)を参照してください。
 
 ## 実装済み・この環境で検証した範囲
 
@@ -8,7 +8,7 @@
 - Bedrock専用Responses transport、SigV4またはAPIキー、store:false、reasoningを含むtool roundtrip、SSE parser、能力・予算制約。**transportはモック試験であり実AWS成功ではない**。
 - 定期候補の選別、静穏時間、集中モード、通知重複・cooldown、イベントclaimと再試行。
 - JSON mailboxの相関・上限・期限・重複、tombstoneと更新順序の判定。
-- Edge拡張のコードとNative Messagingプロトコル。Windows relay/登録スクリプトのソース。
+- Chrome・Edge共通のManifest V3拡張とNative Messagingプロトコル。ブラウザ別のWindows relay/登録・解除スクリプト。
 - 6タブのTk UIとCLI、オフライン/実接続用doctor。
 - Power Automateの8種類の構築仕様、3つのJSON schema、文字起こしフロー定義ドラフト生成器。
 
@@ -19,7 +19,7 @@
 | 対象 | 現在の判定 | 判定方法 |
 |---|---|---|
 | Windows UI/Tk、ACL、長時間稼働 | NOT_TESTED | 実機起動・操作・権限・スリープ復帰 |
-| Native hostのC#コンパイル/署名/Edge接続 | NOT_TESTED | register→Ping→架空capture→検索 |
+| Native hostの署名/Chrome・Edgeの実ブラウザ接続 | NOT_TESTED | 各ブラウザでregister→Ping→架空capture→検索 |
 | 実Bedrock認証・処理地域・reasoning互換 | NOT_TESTED | 承認後doctor --live |
 | GPTによる候補や通知の品質 | NOT_TESTED | 架空案件の評価と勤務日試用 |
 | Power Automate実フロー | NOT_TESTED | 接続を選択し新規構築・テスト実行 |
@@ -27,7 +27,7 @@
 | Box SSO/DLP・同期遅延 | NOT_TESTED | 固定架空JSON配送と実測 |
 | SharePoint検索の範囲 | NOT_TESTED | 固定許可サイト検索と全文/抜粋比較 |
 
-自動テストにWindows/LinuxのCI定義を追加しているが、CI定義はソースZIP内にあり、GitHub上では未実行。会社のWindows実機試験とは別。
+GitHub ActionsはWindows/Linux・Python3.11/3.13で実行します。初回CIはLinux成功、Windowsではテスト用ファイルの文字コード未指定により4件失敗したため、UTF-8を明示する修正を加えました。WindowsではC#コンパイル、Chrome/Edge登録、実行ファイル→PythonのPing/日本語captureと拒否・解除の統合試験も追加しています。[最新の実行結果](https://github.com/mugi0227/AI-Agent/actions)を確認してください。会社の実ブラウザ・実機試験とは別です。
 
 ## 未実装・意図的な非対応
 

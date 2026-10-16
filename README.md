@@ -4,7 +4,7 @@
 
 > **検証用の初版です。** ローカル/モックテストは実施していますが、会社テナントの権限、Windows実機、実Bedrock、Power Automateのフローはこのリポジトリだけでは検証できません。初期状態は収集・クラウド推論・定期通知を無効化しています。会社の承認後に必要な機能だけ有効化してください。
 
-> **この納品時点のGitHub反映状況:** 設計書だけがコミット済みです。実装一式の書き込みはChatGPT側のGitHubツールの安全確認でブロックされ、リモートへ反映されていません。初回は提供されたソースZIPを展開してください。通常の承認済み開発手順によるリポジトリへの統合は、[納品状況](docs/DELIVERY_STATUS.md)に記載しています。
+> **GitHub反映済み:** 実装一式を`main`へ登録しました。Chrome・Edge共通拡張は[導入手順](extension/README.md)、現在の完成度と入力画面の説明は[コードレビュー](docs/READINESS_REVIEW.md)を参照してください。
 
 ## 最初に読むもの
 
@@ -24,12 +24,12 @@ Box / OneDrive 専用受渡フォルダ ──→ 正規化・重複排除 ─�
                                                               ↑       ↕
 Box / OneDrive / SharePoint同期フォルダ ──→ 許可した資料のみ ───┘   自作Agent
                                                                       ↕
-Edgeで選択文をプレビュー → Native Messaging → ローカル受信箱    Bedrock Responses
+Chrome / Edgeで文章を確認 → Native Messaging → ローカル受信箱   Bedrock Responses
                                                                       ↕
                                                         デスクトップUI / CLI
 ```
 
-同期経由の追加取得は非同期。対話は既存のローカル情報と、Edgeから直接渡した文脈を優先します。独自Graphアプリ、Docker、WSL、外部公開HTTPサーバー、OpenClaw本体は必須ではありません。
+同期経由の追加取得は非同期。対話は既存のローカル情報と、Chrome・Edgeから直接渡した文脈を優先します。独自Graphアプリ、Docker、WSL、外部公開HTTPサーバー、OpenClaw本体は必須ではありません。
 
 ## 実装されている機能
 
@@ -52,9 +52,8 @@ Edgeで選択文をプレビュー → Native Messaging → ローカル受信�
 Python 3.11以上。標準ライブラリだけで基本機能とテストが動きます。
 
 ```powershell
-# 初回: 提供されたソースZIPを展開し、そのAI-Agentフォルダへ移動
-# GitHubは設計書のみのため、cloneだけでは実装を取得できません。
-cd <展開先>\AI-Agent
+git clone https://github.com/mugi0227/AI-Agent.git
+cd AI-Agent
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --no-build-isolation -e .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -67,6 +66,12 @@ py -3.11 -m venv .venv
 
 PowerShellのExecutionPolicyや会社の制御は変更しません。Pythonバージョン/パッケージ配布に制限がある場合は会社の承認済み経路を使用します。
 
+## AIへの指示はどこから入力する？
+
+`python -m work_assistant gui`で開くデスクトップアプリの「会話」タブ下部に、1行の入力欄と「送信」ボタンがあります。Enterでも送れます。「案件Aについて、取得済み資料から次の確認事項を整理して」のように入力します。応答と確認した出典は会話欄に表示されます。資料検索は接続なしでも使えますが、AI応答にはBedrockの承認・認証・モデル設定が必要です。
+
+CLIからは`python -m work_assistant ask "取得済み資料から会議の準備を手伝って"`でも同じAgentへ依頼できます。ブラウザ拡張は資料を渡す入口です。拡張内のチャット、Webチャット、スマホ画面、Teams/Slackからの指示受付は未実装です。会話は現状1つの`main`セッションで、会話一覧やスレッド切替、添付・音声入力はありません。詳細は[完成度レビュー](docs/READINESS_REVIEW.md)を参照してください。
+
 ## 設定
 
 既定の保存先は **`%LOCALAPPDATA%\WorkAssistant`**。`config.json`を編集し、変更後は再起動します。サンプルは`config.example.json`。DBは同期フォルダに置かないでください。
@@ -74,7 +79,7 @@ PowerShellのExecutionPolicyや会社の制御は変更しません。Pythonバ�
 承認後に設定するもの:
 - `local_data_approved`と`roots`（読むフォルダの完全なパス）。最初は小さな専用検証フォルダ。
 - `drop_folders`（PAから受け取るJSON）、`outbox`と`bridge_enabled`（追加取得の依頼を出す場合）。
-- `allowed_web_hosts`と`extension_ids`（Edgeキャプチャを使う場合）。
+- `allowed_web_hosts`と`extension_ids`（Chrome・Edgeキャプチャを使う場合）。
 - `bedrock.enabled`、`data_transfer_approved`、モデル・endpoint・認証・処理地域。定期推論は別途`heartbeat_enabled`。
 
 クラウドから取得した情報は既定24時間で再確認が必要です。再確認フローがなければ期限後は利用を停止します。原文が失効/改訂した場合、以前の抽出候補や会話キャッシュも保守的に失効させます。これは完全なリアルタイム権限追従ではありません。
@@ -101,9 +106,9 @@ SigV4は承認されたAWSプロファイル/SSOと追加のboto3を利用。API
 .\.venv\Scripts\python.exe -m work_assistant doctor --live
 ```
 
-## Edge連携
+## Chrome・Edge連携
 
-会社が許可する配布方式で`extension/`を読み込み、取得した拡張IDと許可ホストを本体設定へ登録します。インストール後、`scripts/register-native-host.ps1`を使用してHKCUのNative hostを登録。既存Windows .NET Frameworkコンパイラによる小さな固定用途リレーが必要です。実行/署名ポリシーでブロックされた場合は停止し、[会社PC検証手順](docs/COMPANY_CODEX_PROMPT.md)へ進みます。
+両ブラウザで同じ`extension/`を読み込み、各ブラウザの拡張IDと許可ホストを本体設定へ登録します。Chromeは`scripts/register-native-host.ps1 -Browser Chrome ...`、Edgeは`-Browser Edge ...`でHKCUのNative hostを登録します。登録・解除と許可元manifestはブラウザごとに独立しています。詳しいコマンドは[拡張の導入手順](extension/README.md)を参照してください。既存Windows .NET Frameworkコンパイラによる固定用途リレーが必要です。
 
 拡張のPing→選択文プレビュー→保存を試します。保存はローカルへの転送で、そこから自動的にBedrockへ即時送信するものではありません。アプリの検索・対話・定期確認が、許可設定に基づいて使用します。自律的なサイト巡回やページの自動クリックは初版に含みません。
 

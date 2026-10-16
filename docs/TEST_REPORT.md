@@ -1,5 +1,16 @@
 # 納品ソースの実行テスト結果
 
+## Chrome・Edge対応時の追試（2026-10-16）
+
+- Linux / Python 3.12.14 / Node 24.19.0で68件のunittest、compileall、架空デモ、拡張JS構文検査、Power Automateドラフト生成を再実行し、すべて成功。
+- 初回GitHub CIはLinuxのPython3.11/3.13で成功。Windowsの同2構成では、テスト内の`Path.write_text/read_text`で文字コードを省略したため、日本語データの4試験が失敗。該当箇所にUTF-8を明示する修正を追加。
+- Windows CIへ`tests/test-native-host.ps1`を追加。Chrome・Edgeを別々に登録し、C#→分離モードのPython→Ping/日本語capture、未許可ID拒否、Edge解除後のChrome接続を試験する。実ブラウザUIや実テナントの確認は含まない。
+- 以降の各コミットのWindows/Linux実行結果は[GitHub Actions](https://github.com/mugi0227/AI-Agent/actions)を参照。
+
+以下は初版ZIP作成時の記録であり、現在のGitHubへの反映状況・CI実行状況とは区別する。
+
+## 初版ZIPの検証記録
+
 実施日: 2026-10-16。環境: Linux / Python 3.13.5.
 
 **この結果はローカル/モック/架空データによるものです。Windows、AWS実接続、M365/Boxテナント、GitHub CIは未実行です。**
