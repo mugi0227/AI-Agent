@@ -27,7 +27,7 @@
 | Box SSO/DLP・同期遅延 | NOT_TESTED | 固定架空JSON配送と実測 |
 | SharePoint検索の範囲 | NOT_TESTED | 固定許可サイト検索と全文/抜粋比較 |
 
-GitHub ActionsはWindows/Linux・Python3.11/3.13で実行します。初回CIはLinux成功、Windowsではテスト用ファイルの文字コード未指定により4件失敗したため、UTF-8を明示する修正を加えました。WindowsではC#コンパイル、Chrome/Edge登録、実行ファイル→PythonのPing/日本語captureと拒否・解除の統合試験も追加しています。[最新の実行結果](https://github.com/mugi0227/AI-Agent/actions)を確認してください。会社の実ブラウザ・実機試験とは別です。
+GitHub ActionsはWindows/Linux・Python3.11/3.13で実行します。Windowsで見つかったテスト用ファイルとCLI日本語出力の文字コード問題を修正し、69件のunittestへ増やしました。WindowsではC#コンパイル、Chrome/Edge登録、実行ファイル→PythonのPing/日本語captureと拒否・解除の統合試験も追加しています。[最新の実行結果](https://github.com/mugi0227/AI-Agent/actions)を確認してください。会社の実ブラウザ・実機試験とは別です。
 
 ## 未実装・意図的な非対応
 

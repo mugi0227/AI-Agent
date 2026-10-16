@@ -2,8 +2,9 @@
 
 ## Chrome・Edge対応時の追試（2026-10-16）
 
-- Linux / Python 3.12.14 / Node 24.19.0で68件のunittest、compileall、架空デモ、拡張JS構文検査、Power Automateドラフト生成を再実行し、すべて成功。
+- Linux / Python 3.12.14 / Node 24.19.0で69件のunittest、compileall、架空デモ、拡張JS構文検査、Power Automateドラフト生成が成功。
 - 初回GitHub CIはLinuxのPython3.11/3.13で成功。Windowsの同2構成では、テスト内の`Path.write_text/read_text`で文字コードを省略したため、日本語データの4試験が失敗。該当箇所にUTF-8を明示する修正を追加。
+- Windowsで68件のテストが通った後、CLIデモの日本語出力が標準出力の既定文字コードにより失敗する問題も確認。CLIの出力をUTF-8へ統一し、`PYTHONIOENCODING=cp1252`でも日本語JSONが正常に出力されるsubprocess回帰試験を追加（合計69件）。
 - Windows CIへ`tests/test-native-host.ps1`を追加。Chrome・Edgeを別々に登録し、C#→分離モードのPython→Ping/日本語capture、未許可ID拒否、Edge解除後のChrome接続を試験する。実ブラウザUIや実テナントの確認は含まない。
 - 以降の各コミットのWindows/Linux実行結果は[GitHub Actions](https://github.com/mugi0227/AI-Agent/actions)を参照。
 

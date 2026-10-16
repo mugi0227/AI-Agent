@@ -15,7 +15,7 @@
 | M365 / Box / Power Automate | データ契約と構築手順 | schema、8種類のflow仕様、文字起こし用ドラフト生成器。接続済みの完成フローではない |
 | 配布・常用 | 未完成 | インストーラー、署名済み配布、トレイ、OS通知、自動更新なし。Windowsスリープ復帰・長時間稼働・会社ポリシーでの確認が必要 |
 
-自動テストが成功しても、実Bedrockや会社テナントとの疎通成功を意味しません。初回GitHub CIはLinuxの2構成で成功し、Windowsの2構成ではテスト用ファイルのUTF-8指定不足で失敗しました。今回その原因を修正し、Chrome/Edgeの登録とC#→Python通信のWindows試験を追加しています。最新結果は[Actions](https://github.com/mugi0227/AI-Agent/actions)を確認してください。
+自動テストが成功しても、実Bedrockや会社テナントとの疎通成功を意味しません。WindowsのCIでテスト用ファイルとCLI日本語出力の文字コード問題が見つかったため修正しました。回帰試験を含む69件のunittestと、Chrome/Edgeの登録・C#→Python通信のWindows試験があります。最新結果は[Actions](https://github.com/mugi0227/AI-Agent/actions)を確認してください。
 
 ## 指示を入力する入口
 

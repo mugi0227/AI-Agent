@@ -3,6 +3,8 @@ import io
 import json
 import os
 import struct
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -34,6 +36,18 @@ def message(text="回答"):
 
 def call(name, args, call_id="c1", extra=None):
     return {"status": "completed", "output": (extra or []) + [{"type": "function_call", "call_id": call_id, "name": name, "arguments": canonical(args)}]}
+
+
+class CLITests(unittest.TestCase):
+    def test_demo_utf8_with_legacy_parent_encoding(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "work_assistant", "demo"],
+            env=dict(os.environ, PYTHONIOENCODING="cp1252"),
+            capture_output=True, timeout=30, check=True,
+        )
+        output = json.loads(result.stdout.decode("utf-8"))
+        self.assertEqual(output["mode"], "offline_synthetic_demo")
+        self.assertIn("塗工", output["results"][0]["text"])
 
 
 class Fixture(unittest.TestCase):

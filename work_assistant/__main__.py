@@ -24,6 +24,10 @@ def synthetic_envelope(kind="transcript", source_id="demo:meeting") -> dict:
 
 
 def main(argv=None) -> int:
+    # JSON output must stay UTF-8 even when Windows redirects it through a legacy codepage.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Windows向けローカル業務秘書。既定では推論・収集とも無効です。")
     parser.add_argument("--home", type=Path, default=default_home(), help="同期フォルダ外の私有データ領域")
     sub = parser.add_subparsers(dest="command", required=True)
