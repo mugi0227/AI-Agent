@@ -71,14 +71,14 @@ try {
     Assert-True ($manifest.allowed_origins.Count -eq 1) 'Unexpected native origins.'
     Assert-True ($manifest.allowed_origins[0] -eq "chrome-extension://$($ids[$browser])/") 'Browser origin mismatch.'
     $reply = Invoke-Native $manifest.path "chrome-extension://$($ids[$browser])/" @{operation='ping'}
-    Assert-True ($reply.status -eq 'ok') "$browser native ping failed."
+    Assert-True ($reply.status -eq 'ok') ("$browser native ping failed: " + ($reply | ConvertTo-Json -Compress))
     # Build Japanese text without relying on the PowerShell 5 script-file codepage.
     $text = ([string][char]0x65E5) + [char]0x672C + [char]0x8A9E + "`n" + $browser
     $reply = Invoke-Native $manifest.path "chrome-extension://$($ids[$browser])/" @{
       operation='capture'; url='https://example.invalid/article?token=discard#fragment';
       title='Synthetic capture'; text=$text; scope='selection'
     }
-    Assert-True ($reply.status -eq 'saved_locally') "$browser native capture failed."
+    Assert-True ($reply.status -eq 'saved_locally') ("$browser native capture failed: " + ($reply | ConvertTo-Json -Compress))
     $saved = Get-Content (Join-Path $testHome "captures\$($reply.event_id).json") -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($saved.content -eq $text) 'Japanese native frame did not roundtrip.'
     Assert-True ($saved.source_url -eq 'https://example.invalid/article') 'Capture URL was not redacted.'
