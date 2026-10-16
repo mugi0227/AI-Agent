@@ -19,36 +19,16 @@ function Assert-True($condition, [string]$message) {
 }
 
 function Invoke-Native([string]$exe, [string]$origin, [hashtable]$payload) {
-  $start = New-Object Diagnostics.ProcessStartInfo
-  $start.FileName = $exe
-  $start.Arguments = $origin
-  $start.UseShellExecute = $false
-  $start.CreateNoWindow = $true
-  $start.RedirectStandardInput = $true
-  $start.RedirectStandardOutput = $true
-  $start.RedirectStandardError = $true
-  $process = New-Object Diagnostics.Process
-  $process.StartInfo = $start
+  # PowerShell 5 / .NET StreamWriter may prepend a BOM to binary stdin.
+  # Use Python's byte pipes to reproduce the browser's native-messaging frames.
+  $payloadPath = Join-Path $testHome ('probe-' + [Guid]::NewGuid().ToString('N') + '.json')
   try {
-    [void]$process.Start()
-    $body = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Compress))
-    $header = [BitConverter]::GetBytes([int]$body.Length)
-    $process.StandardInput.BaseStream.Write($header, 0, $header.Length)
-    $process.StandardInput.BaseStream.Write($body, 0, $body.Length)
-    $process.StandardInput.Close()
-    Assert-True ($process.WaitForExit(35000)) 'Native host timed out.'
-    $output = New-Object IO.MemoryStream
-    try {
-      $process.StandardOutput.BaseStream.CopyTo($output)
-      $bytes = $output.ToArray()
-      Assert-True ($bytes.Length -ge 4) ('Native host returned no frame. ' + $process.StandardError.ReadToEnd())
-      $length = [BitConverter]::ToInt32($bytes, 0)
-      Assert-True ($length -eq $bytes.Length - 4) 'Native reply frame length mismatch.'
-      return ([Text.Encoding]::UTF8.GetString($bytes, 4, $length) | ConvertFrom-Json)
-    } finally { $output.Dispose() }
+    [IO.File]::WriteAllText($payloadPath, ($payload | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    $reply = & $PythonExe (Join-Path $PSScriptRoot 'native_probe.py') $exe $origin $payloadPath
+    Assert-True ($LASTEXITCODE -eq 0) 'Native byte-pipe probe failed.'
+    return ($reply | ConvertFrom-Json)
   } finally {
-    if ($process.Id -and !$process.HasExited) { $process.Kill() }
-    $process.Dispose()
+    if (Test-Path $payloadPath) { Remove-Item $payloadPath }
   }
 }
 
