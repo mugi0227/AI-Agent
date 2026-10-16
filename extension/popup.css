@@ -1,0 +1,6 @@
+body { width: 440px; margin: 18px; font: 14px/1.6 system-ui, sans-serif; background: #f7f8fa; color: #162637; }
+h1 { font-size: 21px; margin: 0; } label { display: block; margin-top: 12px; }
+input, select, textarea { box-sizing: border-box; width: 100%; border: 1px solid #a8b6c3; border-radius: 6px; padding: 7px; font: inherit; }
+button { padding: 8px 12px; margin: 8px 4px 0 0; border: 1px solid #8b9eac; border-radius: 6px; background: white; cursor: pointer; }
+#send { background: #134f70; color: white; width: 100%; } button:disabled { opacity: .45; cursor: default; }
+#source, #status { overflow-wrap: anywhere; } #status { font-weight: 600; }

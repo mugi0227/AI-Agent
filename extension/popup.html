@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>秘書に渡す</title><link rel="stylesheet" href="popup.css"></head>
+<body><h1>この情報を秘書へ</h1><p>ページ内の入力欄や認証情報は収集対象にしません。送信前に本文を確認してください。</p>
+<label>許可するホスト名（完全一致・カンマ区切り）<input id="hosts" placeholder="tenant.sharepoint.com"></label>
+<button id="save">許可リストを保存</button><button id="ping">接続確認</button>
+<label>取得範囲<select id="scope"><option value="selection">選択した文章だけ</option><option value="visible_page">現在表示されているページ本文</option></select></label>
+<button id="preview">プレビューを作る</button><p id="source"></p>
+<textarea id="text" rows="12" maxlength="60000" placeholder="ここで確認・編集してから渡します"></textarea>
+<button id="send" disabled>この内容をローカル秘書に渡す</button><p id="status" role="status"></p>
+<script src="popup.js"></script></body></html>

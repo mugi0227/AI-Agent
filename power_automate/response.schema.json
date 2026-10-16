@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "request_id",
+    "action",
+    "status",
+    "documents",
+    "error_code",
+    "coverage"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "bridge_response"
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "action": {
+      "enum": [
+        "search_mail",
+        "get_calendar",
+        "get_transcript",
+        "search_sharepoint"
+      ]
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "$ref": "envelope.schema.json"
+      }
+    },
+    "error_code": {
+      "type": "string",
+      "pattern": "^([A-Z0-9_]{1,80})?$"
+    },
+    "coverage": {
+      "enum": [
+        "partial",
+        "complete_for_query",
+        "unknown"
+      ]
+    }
+  }
+}

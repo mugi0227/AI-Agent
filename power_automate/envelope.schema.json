@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Work Assistant envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "content",
+    "event_id",
+    "expires_at",
+    "kind",
+    "metadata",
+    "observed_at",
+    "schema_version",
+    "source_id",
+    "source_modified_at",
+    "source_url",
+    "title"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": [
+        "calendar",
+        "capture",
+        "document",
+        "mail",
+        "search_result",
+        "teams_message",
+        "tombstone",
+        "transcript"
+      ]
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "content": {
+      "type": "string",
+      "maxLength": 180000
+    },
+    "content_type": {
+      "enum": [
+        "text/plain",
+        "text/html",
+        "text/vtt"
+      ]
+    },
+    "source_url": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "source_modified_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

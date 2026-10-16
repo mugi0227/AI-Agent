@@ -1,0 +1,47 @@
+# 実装・検証状況
+
+2026-10-16時点。**実装コードは提供ZIP内。GitHubへの実装書き込みはブロックされ、設計書のみ反映済みです。** 実装前の詳細設計コミットは`827315bbd79eed338c78aa1c71b4c0518afa636f`。
+
+## 実装済み・この環境で検証した範囲
+
+- PythonネイティブのAgent/SQLite/フォルダ収集/日本語索引/原文出典/明示承認/タスク/案件。
+- Bedrock専用Responses transport、SigV4またはAPIキー、store:false、reasoningを含むtool roundtrip、SSE parser、能力・予算制約。**transportはモック試験であり実AWS成功ではない**。
+- 定期候補の選別、静穏時間、集中モード、通知重複・cooldown、イベントclaimと再試行。
+- JSON mailboxの相関・上限・期限・重複、tombstoneと更新順序の判定。
+- Edge拡張のコードとNative Messagingプロトコル。Windows relay/登録スクリプトのソース。
+- 6タブのTk UIとCLI、オフライン/実接続用doctor。
+- Power Automateの8種類の構築仕様、3つのJSON schema、文字起こしフロー定義ドラフト生成器。
+
+テスト実行環境: Linux、Python3.13.5、Node22.16.0。標準unittestの68項目が成功。Python compileall成功、拡張JSの構文検査成功。Linux/XvfbでGUI起動・6タブ・日本語検索・終了のスモーク試験成功。ネット接続なしでwheelビルドと別ディレクトリへのインストール成功。
+
+## 会社PCでの検証が必要な範囲
+
+| 対象 | 現在の判定 | 判定方法 |
+|---|---|---|
+| Windows UI/Tk、ACL、長時間稼働 | NOT_TESTED | 実機起動・操作・権限・スリープ復帰 |
+| Native hostのC#コンパイル/署名/Edge接続 | NOT_TESTED | register→Ping→架空capture→検索 |
+| 実Bedrock認証・処理地域・reasoning互換 | NOT_TESTED | 承認後doctor --live |
+| GPTによる候補や通知の品質 | NOT_TESTED | 架空案件の評価と勤務日試用 |
+| Power Automate実フロー | NOT_TESTED | 接続を選択し新規構築・テスト実行 |
+| 他人主催会議の文字起こし取得/通知 | NOT_TESTED | 主催者別、閲覧/保存/API/Triggerを分離 |
+| Box SSO/DLP・同期遅延 | NOT_TESTED | 固定架空JSON配送と実測 |
+| SharePoint検索の範囲 | NOT_TESTED | 固定許可サイト検索と全文/抜粋比較 |
+
+自動テストにWindows/LinuxのCI定義を追加しているが、CI定義はソースZIP内にあり、GitHub上では未実行。会社のWindows実機試験とは別。
+
+## 未実装・意図的な非対応
+
+- OpenClaw互換の全チャネル、プラグイン、シェル、マルチエージェント運用。
+- 自律的なブラウザ巡回/自動クリック。現状は明示キャプチャ。
+- メール送信、文書削除、外部書き込み、AIによる承認。
+- LLMによる自動memory flush/要約compaction。現状は有界コンテキスト＋検索可能な過去会話＋承認済記憶。
+- 全M365履歴取得、完全なSharePoint同期、OCR/画像解析、暗号化文書の解除。
+- 意味ベクトル検索、全文書分類DLP、DB独自暗号化、署名済配布パッケージ。
+- Windowsトースト、システムトレイ、自動更新、自動ログオン起動登録。通知はアプリ内。
+- PC停止中の推論、クラウドサービス常駐、24時間稼働。
+
+## 設計上の保守的な選択
+
+原本の改訂/失効時は派生メモ/タスク/会話キャッシュも失効する。古い根拠を保持し続けるより安全側だが、更新頻度の高い資料では再承認が多くなる。会社の保持・権限要件を検証してから、ユーザー所有の独立したタスク記録と出典リンクを分離する発展を検討する。
+
+会議やTeamsの生成時刻・イベント形状、Box同期速度は予測で成功判定していない。実環境での修正指示は`COMPANY_CODEX_PROMPT.md`に記載している。

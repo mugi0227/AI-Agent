@@ -1,0 +1,23 @@
+name: offline-tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m compileall -q work_assistant
+      - run: python -m unittest discover -s tests -v
+      - run: python -m work_assistant demo
+      - run: node --check extension/popup.js
+      - name: Build review-only Power Automate draft
+        run: python power_automate/build_transcript_draft.py --sink onedrive --output draft.json

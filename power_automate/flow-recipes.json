@@ -1,0 +1,139 @@
+{
+  "format": "implementation-recipes-not-import-packages",
+  "schema_version": 1,
+  "requires_company_validation": true,
+  "connector_policy": "standard-only; no custom Graph app; no generic HTTP; no TLS bypass",
+  "flows": [
+    {
+      "id": "F01-mail",
+      "trigger": "Office 365 Outlook: When a new email arrives (V3)",
+      "steps": [
+        "Use approved mailbox and folders only; attachments disabled",
+        "Compose envelope with original message ID, received/sent/modified time, sender, recipients and body",
+        "Create one UUID-named JSON file in approved Box or OneDrive folder",
+        "Scheduled supplement reads Sent Items and refreshes still-authorized retained messages before the local lease expires"
+      ],
+      "fallback": "No connector -> approved .eml exports into an allowlisted local directory; never scrape Outlook auth tokens"
+    },
+    {
+      "id": "F02-calendar",
+      "trigger": "Recurrence during work hours",
+      "steps": [
+        "Get calendar view for a limited date range including recurring instances",
+        "Normalize start_at/end_at to RFC3339 with offset, add canceled state as tombstone",
+        "Compose calendar body with title, attendees and description; same instance keeps stable source_id",
+        "Refresh before cloud_lease_hours; do not treat missing items in a partial page as deletions"
+      ],
+      "fallback": "Approved calendar export or manual agenda text; meeting preparation unavailable if no reliable calendar"
+    },
+    {
+      "id": "F03-transcript-manual",
+      "trigger": "Manually trigger a flow: meetingId",
+      "steps": [
+        {
+          "connector": "Microsoft Teams",
+          "operationId": "ListMeetingTranscripts",
+          "parameters": [
+            "meetingId"
+          ]
+        },
+        {
+          "foreach": "returned transcript collection; verify actual response path in tenant",
+          "connector": "Microsoft Teams",
+          "operationId": "GetMeetingTranscriptContent",
+          "parameters": [
+            "meetingId",
+            "transcriptId"
+          ]
+        },
+        "Compose transcript envelope; content_type=text/vtt only when content is actually VTT; otherwise text/plain",
+        "Write only successfully retrieved nonempty content; preserve speaker/time fields",
+        "Test organizer/self, internal other-organizer and authorized guest meeting separately"
+      ],
+      "fallback": "Request co-organizer or explicit permitted download/export; unavailable permission is BLOCKED_POLICY, not an empty transcript"
+    },
+    {
+      "id": "F04-transcript-auto",
+      "trigger": {
+        "connector": "Microsoft Teams",
+        "operationId": "TranscriptTrigger",
+        "parameters": [
+          "scopeType",
+          "body (dynamic: resolve in designer)"
+        ]
+      },
+      "steps": [
+        "Reuse proven F03 retrieval steps",
+        "Verify which meetings actually produce notifications; retrieval and notification are independent",
+        "Where permitted, periodically check allowlisted meeting IDs for late-arriving transcripts; bounded retries"
+      ],
+      "fallback": "If trigger misses other organizers but F03 succeeds, scheduled known-meeting check; if lookup blocked, approved organizer export"
+    },
+    {
+      "id": "F05-teams",
+      "trigger": "WebhookNewMessageTrigger (configured chat/channel only)",
+      "steps": [
+        "Capture specific allowed conversations",
+        "Separately retrieve replies via ListRepliesToMessage where applicable",
+        "Backfill allowed ranges with bounded paging and explicit coverage",
+        "Refresh edits and emit tombstones for confirmed deleted/revoked sources, not transient errors"
+      ],
+      "fallback": "Limit to supported conversations or explicit user-selected capture; never claim complete company history"
+    },
+    {
+      "id": "F06-request-router",
+      "trigger": "Box/OneDrive file arrival in request outbox plus scheduled reconciliation",
+      "steps": [
+        "Read file <=1 MB, Parse JSON using request.schema.json",
+        "Validate action allowlist and expiry; reject unknown fields and arbitrary paths/URLs",
+        "Switch action: search_mail uses GetEmailsV3 searchQuery; get_calendar bounded period; get_transcript uses F03; search_sharepoint uses fixed SharePoint site and HttpRequest search REST",
+        "Build response with matching request_id and action; <=20 envelopes",
+        "Return status=error + safe error_code on denial/failure; no raw error text or secrets",
+        "One response UUID file per request; serialize/dedupe repeated trigger by stable request_id; replies go to a separate inbox"
+      ],
+      "fallback": "Disable bridge_enabled; local search and capture keep working"
+    },
+    {
+      "id": "F07-sharepoint-search",
+      "trigger": "F06 search_sharepoint branch",
+      "steps": [
+        {
+          "connector": "SharePoint",
+          "operationId": "HttpRequest",
+          "method": "POST",
+          "uri": "_api/search/postquery",
+          "dataset": "fixed administrator-approved site, never model-supplied",
+          "body": {
+            "request": {
+              "Querytext": "validated request.arguments.query",
+              "RowLimit": "bounded request.arguments.limit",
+              "SelectProperties": {
+                "results": [
+                  "Title",
+                  "Path",
+                  "LastModifiedTime",
+                  "HitHighlightedSummary"
+                ]
+              }
+            }
+          }
+        },
+        "Construct JSON object with Compose, not string concatenation; confirm required OData metadata/headers in tenant",
+        "Decode actual result structure, strip markup, mark coverage=search_snippet",
+        "Never claim a snippet is a complete document; obtain full text through permitted sync/capture before substantive analysis"
+      ],
+      "fallback": "Synced SharePoint library or explicit browser capture; not a generic HTTP premium connector"
+    },
+    {
+      "id": "F08-reconcile",
+      "trigger": "Periodic before cache lease expiry",
+      "steps": [
+        "Recheck access/content of retained sources; emit refreshed envelopes only after actual successful retrieval",
+        "Confirmed deletion/access revocation -> tombstone with current observed_at",
+        "Transient failure -> no refresh, local lease expires fail-closed",
+        "Separate retention for bridge JSON files and flow run history; cleanup only approved integration-owned locations"
+      ],
+      "fallback": "Shorten lease and accept unavailable cached sources; never extend observed_at without rechecking access"
+    }
+  ]
+}
