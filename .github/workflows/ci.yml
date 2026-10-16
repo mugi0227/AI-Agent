@@ -21,6 +21,19 @@ jobs:
       - run: node --check extension/popup.js
       - name: Build review-only Power Automate draft
         run: python power_automate/build_transcript_draft.py --sink onedrive --output draft.json
+      - name: Prepare Linux GUI tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb python3-tk fonts-noto-cjk
+      - name: Test desktop interactions on Linux
+        if: runner.os == 'Linux'
+        env:
+          WORK_ASSISTANT_UI_TESTS: '1'
+        run: xvfb-run -a python -m unittest discover -s tests -p test_ui.py -v
+      - name: Test desktop interactions on Windows
+        if: runner.os == 'Windows'
+        env:
+          WORK_ASSISTANT_UI_TESTS: '1'
+        run: python -m unittest discover -s tests -p test_ui.py -v
       - name: Install package for isolated native host
         if: runner.os == 'Windows'
         run: python -m pip install --no-deps .

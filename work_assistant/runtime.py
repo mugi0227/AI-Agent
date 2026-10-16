@@ -19,12 +19,14 @@ class Runtime:
     def __init__(self, home: Path, cfg: Settings | None = None, client=None):
         self.home, self.cfg = home, cfg or load(home)
         self.store = Store(home / "assistant.sqlite3")
+        self.store.recover_interrupted()
         self.ingestor = Ingestor(self.store, self.cfg, home)
         self.bridge = Bridge(self.store, self.cfg, self.ingestor)
         self.agent = Agent(self.store, self.cfg, self.ingestor, self.bridge, client or BedrockClient(self.cfg.bedrock))
         self.scheduler = Scheduler(self.store, self.cfg, self.agent)
         self.stop_event, self.background_cancel, self.foreground = threading.Event(), threading.Event(), threading.Event()
         self.chat_lock = threading.Lock()
+        self.active_cancel: threading.Event | None = None
         self.threads: list[threading.Thread] = []
         self.status = "起動済み（承認・設定が未完了なら外部通信しません）"
 
@@ -79,13 +81,17 @@ class Runtime:
             raise AssistantError("FOREGROUND_BUSY")
         self.foreground.set()
         self.background_cancel.set()
+        self.active_cancel = kwargs.pop("cancel", None) or threading.Event()
         try:
-            return self.agent.turn(text, **kwargs)
+            return self.agent.turn(text, cancel=self.active_cancel, **kwargs)
         finally:
+            self.active_cancel = None
             self.foreground.clear()
             self.chat_lock.release()
 
     def close(self) -> None:
         self.stop_event.set()
         self.background_cancel.set()
+        if self.active_cancel:
+            self.active_cancel.set()
         # No join on the UI thread: outstanding HTTP requests have a finite timeout.

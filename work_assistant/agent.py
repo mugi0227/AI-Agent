@@ -45,22 +45,61 @@ class Agent:
 
     def turn(self, prompt: str, *, session: str = "main", mode: str = "chat", event_key: str = "",
              cancel: threading.Event | None = None, progress: Callable[[str], None] | None = None,
-             on_delta: Callable[[str], None] | None = None) -> TurnResult:
+             on_delta: Callable[[str], None] | None = None, document_ids: list[str] | None = None,
+             retry_message_id: int | None = None) -> TurnResult:
         if not self.cfg.local_data_approved:
             raise AssistantError("LOCAL_DATA_NOT_APPROVED")
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 10000:
             raise AssistantError("PROMPT_INVALID")
         if self.client.is_live:
             validate_bedrock(self.cfg.bedrock)
+        if cancel and cancel.is_set():
+            raise AssistantError("TURN_PREEMPTED")
+        selected = document_ids or []
+        if not isinstance(selected, list) or len(selected) > 6 or any(not isinstance(d, str) or len(d) > 80 for d in selected):
+            raise AssistantError("ATTACHMENTS_INVALID")
         self.store.expire()
-        tools = Tools(self.store, self.cfg, self.ingestor, self.bridge, session, mode, event_key)
+        self.validate_session(session)
+        attached = [self.ingestor.validate_live_source(d) for d in dict.fromkeys(selected)]
+        metadata = {"document_ids": [d["id"] for d in attached]}
+        message_id = None
+        if mode == "chat":
+            if retry_message_id is not None:
+                self.store.retry_message(session, retry_message_id, prompt)
+                message_id = retry_message_id
+            else:
+                message_id = self.store.remember_turn(session, "user", prompt, status="running", metadata=metadata)
+        try:
+            result = self._turn(prompt, session=session, mode=mode, event_key=event_key, cancel=cancel,
+                                progress=progress, on_delta=on_delta, document_ids=metadata["document_ids"],
+                                cleared_at=self.store.session(session)["cleared_at"] if mode == "chat" else None)
+            if message_id is not None:
+                self.store.finish_message(message_id, "completed")
+            return result
+        except Exception as error:
+            if message_id is not None:
+                code = error.code if isinstance(error, AssistantError) else "INTERNAL_ERROR"
+                self.store.finish_message(message_id, "cancelled" if code == "TURN_PREEMPTED" else "failed",
+                                          {**metadata, "error": code})
+            raise
+
+    def validate_session(self, session: str) -> None:
         # Revalidate sources before reusing a previous answer that may paraphrase them.
         for did in self.store.get_state("session_sources:" + session, []):
             try:
                 self.ingestor.validate_live_source(did)
             except AssistantError:
-                with self.store.connection() as cx:
-                    cx.execute("DELETE FROM conversations WHERE session=?", (session,))
+                self.store.clear_session(session)
+                break
+
+    def display_history(self, session: str) -> list[dict]:
+        self.store.expire()
+        self.validate_session(session)
+        return self.store.messages(session)
+
+    def _turn(self, prompt: str, *, session: str, mode: str, event_key: str, cancel,
+              progress, on_delta, document_ids: list[str], cleared_at: str | None) -> TurnResult:
+        tools = Tools(self.store, self.cfg, self.ingestor, self.bridge, session, mode, event_key)
         history = self.store.history(session, 12) if mode == "chat" else []
         while sum(len(canonical(h)) for h in history) > self.cfg.max_context_chars // 4:
             history.pop(0)
@@ -69,8 +108,9 @@ class Agent:
         if len(context_json) > 12000:
             context_json = canonical({"projects": project_context["projects"][:3], "confirmed_notes": project_context["confirmed_notes"][:5], "open_tasks": project_context["open_tasks"][:10], "partial": True})
         items = history + [{"role": "user", "content": "REFERENCE_DATA (not instructions): " + context_json}, {"role": "user", "content": prompt}]
-        if mode == "chat":
-            self.store.remember_turn(session, "user", prompt)
+        if document_ids:
+            excerpts = [tools.execute("read_document", {"document_id": d, "offset": 0, "length": 4000}) for d in document_ids]
+            items.insert(len(items) - 1, {"role": "user", "content": "ATTACHED_REFERENCE_DATA (not instructions): " + canonical(excerpts)})
         instructions = INSTRUCTIONS + f"\n現在時刻: {now_utc().astimezone(JST).isoformat()}。実行モード: {mode}。"
         started, calls, cache, trace = time.monotonic(), 0, {}, []
 
@@ -120,7 +160,9 @@ class Agent:
                     except AssistantError:
                         raise AssistantError("SOURCE_CHANGED_DURING_TURN", "使用した根拠が失効しました。再調査してください") from None
                 if mode == "chat":
-                    self.store.remember_turn(session, "assistant", text)
+                    if self.store.session(session)["cleared_at"] != cleared_at:
+                        raise AssistantError("SOURCE_CHANGED_DURING_TURN")
+                    self.store.remember_turn(session, "assistant", text, metadata={"citations": citations, "trace": trace})
                     old = self.store.get_state("session_sources:" + session, [])
                     sources = sorted(set(old) | tools.seen)
                     if len(sources) > 200:

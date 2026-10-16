@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS conversations (
  id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, role TEXT NOT NULL,
  text TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS conversations_session ON conversations(session,id);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+ id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ archived INTEGER NOT NULL DEFAULT 0, draft TEXT NOT NULL DEFAULT '',
+ document_ids TEXT NOT NULL DEFAULT '[]', cleared_at TEXT
+);
+CREATE TABLE IF NOT EXISTS chat_details (
+ message_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+ status TEXT NOT NULL DEFAULT 'completed', metadata TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS notifications (
  id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, title TEXT NOT NULL, text TEXT NOT NULL,
  document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -90,10 +100,17 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as cx:
             version = cx.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise AssistantError("DB_VERSION_UNSUPPORTED")
             cx.executescript(SCHEMA)
-            cx.execute("PRAGMA user_version=1")
+            cx.execute("PRAGMA user_version=2")
+            cx.execute("INSERT OR IGNORE INTO chat_sessions(id,title,created_at,updated_at) "
+                       "SELECT session,'これまでの会話',min(created_at),max(created_at) FROM conversations GROUP BY session")
+
+    def recover_interrupted(self) -> None:
+        # Called once by Runtime startup, never by read-only diagnostics opening the DB.
+        with self.connection() as cx:
+            cx.execute("UPDATE chat_details SET status='interrupted' WHERE status='running'")
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -170,6 +187,8 @@ class Store:
         cx.execute("DELETE FROM notifications WHERE document_id=?", (document_id,))
         # Conservative: summaries may contain paraphrased source text. Clear ALL chat cache.
         cx.execute("DELETE FROM conversations")
+        cx.execute("UPDATE chat_sessions SET title='新しい会話',draft='',document_ids='[]',cleared_at=?", (stamp(),))
+        cx.execute("DELETE FROM state WHERE key LIKE 'session_sources:%'")
 
     def invalidate(self, document_id: str, status: str = "revoked") -> None:
         with self.transaction() as cx:
@@ -298,21 +317,111 @@ class Store:
         with self.connection() as cx:
             cx.execute("UPDATE tasks SET status='done' WHERE id=?", (task_id,))
 
-    def remember_turn(self, session: str, role: str, text: str) -> None:
+    @staticmethod
+    def _session_id(session: str) -> str:
+        if not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session):
+            raise AssistantError("SESSION_INVALID")
+        return session
+
+    def ensure_session(self, session: str = "main") -> str:
+        self._session_id(session)
+        with self.connection() as cx:
+            cx.execute("INSERT OR IGNORE INTO chat_sessions(id,title,created_at,updated_at) VALUES(?,?,?,?)",
+                       (session, "新しい会話", stamp(), stamp()))
+        return session
+
+    def new_session(self) -> str:
+        return self.ensure_session(str(uuid.uuid4()))
+
+    def sessions(self, query: str = "", *, archived: bool = False) -> list[dict]:
+        with self.connection() as cx:
+            return [dict(r) for r in cx.execute(
+                "SELECT s.*, (SELECT count(*) FROM conversations c WHERE c.session=s.id) AS message_count "
+                "FROM chat_sessions s WHERE archived=? AND (instr(lower(title),lower(?))>0 OR EXISTS "
+                "(SELECT 1 FROM conversations c WHERE c.session=s.id AND instr(lower(c.text),lower(?))>0)) "
+                "ORDER BY updated_at DESC,id LIMIT 200", (int(archived), query[:200], query[:200]))]
+
+    def session(self, session: str) -> dict:
+        self.ensure_session(session)
+        with self.connection() as cx:
+            row = cx.execute("SELECT * FROM chat_sessions WHERE id=?", (session,)).fetchone()
+        return {**dict(row), "document_ids": json.loads(row["document_ids"])}
+
+    def rename_session(self, session: str, title: str) -> None:
+        if not isinstance(title, str) or not title.strip() or len(title) > 100 or any(ord(c) < 32 for c in title):
+            raise AssistantError("SESSION_TITLE_INVALID")
+        self.ensure_session(session)
+        with self.connection() as cx:
+            cx.execute("UPDATE chat_sessions SET title=?,updated_at=? WHERE id=?", (title.strip(), stamp(), session))
+
+    def archive_session(self, session: str, archived: bool = True) -> None:
+        self._session_id(session)
+        with self.connection() as cx:
+            cx.execute("UPDATE chat_sessions SET archived=?,updated_at=? WHERE id=?", (int(archived), stamp(), session))
+
+    def save_draft(self, session: str, text: str, document_ids: list[str], *, expected_cleared_at: str | None = None) -> None:
+        if not isinstance(text, str) or len(text) > 50000:
+            raise AssistantError("PROMPT_INVALID")
+        if len(document_ids) > 6 or any(not isinstance(d, str) or len(d) > 80 for d in document_ids):
+            raise AssistantError("ATTACHMENTS_INVALID")
+        self.ensure_session(session)
+        with self.transaction() as cx:
+            revision = cx.execute("SELECT cleared_at FROM chat_sessions WHERE id=?", (session,)).fetchone()[0] or ""
+            if expected_cleared_at is not None and revision != expected_cleared_at:
+                raise AssistantError("CHAT_CHANGED")
+            cx.execute("UPDATE chat_sessions SET draft=?,document_ids=? WHERE id=?", (text, canonical(document_ids), session))
+
+    def clear_session(self, session: str) -> None:
+        self._session_id(session)
+        with self.transaction() as cx:
+            cx.execute("DELETE FROM conversations WHERE session=?", (session,))
+            cx.execute("UPDATE chat_sessions SET title='新しい会話',draft='',document_ids='[]',cleared_at=? WHERE id=?", (stamp(), session))
+            cx.execute("DELETE FROM state WHERE key=?", ("session_sources:" + session,))
+
+    def remember_turn(self, session: str, role: str, text: str, *, status: str = "completed", metadata: dict | None = None) -> int:
         if role not in ("user", "assistant"):
             raise AssistantError("INVALID_ROLE")
+        self.ensure_session(session)
+        with self.transaction() as cx:
+            cursor = cx.execute("INSERT INTO conversations(session,role,text,created_at) VALUES(?,?,?,?)", (session, role, text[:30000], stamp()))
+            mid = cursor.lastrowid
+            cx.execute("INSERT INTO chat_details VALUES(?,?,?)", (mid, status, canonical(metadata or {})))
+            title = " ".join(text.split())[:48] if role == "user" else "新しい会話"
+            cx.execute("UPDATE chat_sessions SET updated_at=?,title=CASE WHEN title='新しい会話' THEN ? ELSE title END WHERE id=?", (stamp(), title, session))
+        return mid
+
+    def finish_message(self, message_id: int, status: str, metadata: dict | None = None) -> None:
         with self.connection() as cx:
-            cx.execute("INSERT INTO conversations(session,role,text,created_at) VALUES(?,?,?,?)", (session, role, text[:30000], stamp()))
+            if metadata is None:
+                cx.execute("UPDATE chat_details SET status=? WHERE message_id=?", (status, message_id))
+            else:
+                cx.execute("UPDATE chat_details SET status=?,metadata=? WHERE message_id=?", (status, canonical(metadata), message_id))
+
+    def retry_message(self, session: str, message_id: int, prompt: str) -> None:
+        with self.transaction() as cx:
+            row = cx.execute("SELECT c.*,d.status FROM conversations c JOIN chat_details d ON d.message_id=c.id WHERE c.id=? AND c.session=? AND c.role='user'", (message_id, session)).fetchone()
+            latest = cx.execute("SELECT max(id) FROM conversations WHERE session=?", (session,)).fetchone()[0]
+            if not row or row["status"] not in ("failed", "cancelled", "interrupted") or row["text"] != prompt or latest != message_id:
+                raise AssistantError("RETRY_NOT_AVAILABLE")
+            cx.execute("UPDATE chat_details SET status='running' WHERE message_id=?", (message_id,))
+
+    def messages(self, session: str, limit: int = 200) -> list[dict]:
+        with self.connection() as cx:
+            rows = cx.execute("SELECT c.*,coalesce(d.status,'completed') AS status,coalesce(d.metadata,'{}') AS metadata "
+                              "FROM conversations c LEFT JOIN chat_details d ON d.message_id=c.id WHERE c.session=? ORDER BY c.id DESC LIMIT ?", (session, max(1, min(limit, 500)))).fetchall()
+        return [{**dict(r), "metadata": json.loads(r["metadata"])} for r in reversed(rows)]
 
     def history(self, session: str, limit: int = 12) -> list[dict]:
         with self.connection() as cx:
-            rows = cx.execute("SELECT role,text FROM conversations WHERE session=? ORDER BY id DESC LIMIT ?", (session, limit)).fetchall()
+            rows = cx.execute("SELECT c.role,c.text FROM conversations c LEFT JOIN chat_details d ON d.message_id=c.id "
+                              "WHERE c.session=? AND coalesce(d.status,'completed')='completed' ORDER BY c.id DESC LIMIT ?", (session, limit)).fetchall()
         return [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
 
     def search_conversations(self, query: str, session: str) -> list[dict]:
         # Literal substring search, not arbitrary SQL/FTS syntax; deliberately session-scoped.
         with self.connection() as cx:
-            return [dict(r) for r in cx.execute("SELECT role,text,created_at FROM conversations WHERE session=? AND instr(lower(text),lower(?))>0 ORDER BY id DESC LIMIT 5", (session, query))]
+            return [dict(r) for r in cx.execute("SELECT c.role,c.text,c.created_at FROM conversations c LEFT JOIN chat_details d ON d.message_id=c.id "
+                                              "WHERE c.session=? AND coalesce(d.status,'completed')='completed' AND instr(lower(c.text),lower(?))>0 ORDER BY c.id DESC LIMIT 5", (session, query))]
 
     def get_state(self, key: str, default: Any = None) -> Any:
         with self.connection() as cx:

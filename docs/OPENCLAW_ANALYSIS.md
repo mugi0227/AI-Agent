@@ -1,4 +1,4 @@
-# OpenClawの「気が利く」をどう取り入れたか
+# OpenClawを参考にした機能と実装
 
 参照日: 2026-10-16。参照ソースのコミットは `72d41b6f9d0bd2290a959f062b134f60664063d7`。OpenClawのコードをコピーしたり、OpenClawを依存関係にしたりしていない。以下は読んだ実装から得た設計上の判断を、本プロジェクトで別実装したもの。
 
@@ -51,6 +51,8 @@ Heartbeatのドキュメントは、通知を出す応答と静かに終了す�
 | 予算と能力を守る | typed tools / daily budget | 未知tool・引数・予算・外部API拒否 |
 
 ## 一次資料
+
+会話UXについても同じ固定コミットのUIソースを確認しました。会話メニュー、下書き、複数行入力、ショートカット/IME配慮、生成中・確認中の表示を参考に、v0.2.0で既存Tk画面を作り直しています。対応ソースと操作・試験の詳細は[会話UX](CHAT_UX.md)を参照してください。OpenClawのUIコードをコピーしたものではありません。
 
 - https://github.com/openclaw/openclaw/blob/72d41b6f9d0bd2290a959f062b134f60664063d7/src/infra/heartbeat-runner-run.ts
 - https://github.com/openclaw/openclaw/blob/72d41b6f9d0bd2290a959f062b134f60664063d7/src/infra/heartbeat-runner-scheduler.ts

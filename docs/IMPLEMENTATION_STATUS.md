@@ -9,10 +9,10 @@
 - 定期候補の選別、静穏時間、集中モード、通知重複・cooldown、イベントclaimと再試行。
 - JSON mailboxの相関・上限・期限・重複、tombstoneと更新順序の判定。
 - Chrome・Edge共通のManifest V3拡張とNative Messagingプロトコル。ブラウザ別のWindows relay/登録・解除スクリプト。
-- 6タブのTk UIとCLI、オフライン/実接続用doctor。
+- 会話一覧・検索・保管/復元、会話別の履歴/下書き/資料、複数行入力、応答の逐次表示・停止・再実行を持つTk UIとCLI。出典と確認手順、オフライン/実接続用doctor。
 - Power Automateの8種類の構築仕様、3つのJSON schema、文字起こしフロー定義ドラフト生成器。
 
-テスト実行環境: Linux、Python3.13.5、Node22.16.0。標準unittestの68項目が成功。Python compileall成功、拡張JSの構文検査成功。Linux/XvfbでGUI起動・6タブ・日本語検索・終了のスモーク試験成功。ネット接続なしでwheelビルドと別ディレクトリへのインストール成功。
+現行UIの検証: Linux / Python3.13.5 / Tk8.6 / Xvfbで、83件のコア試験と14件の実GUI操作試験、計97件が成功。Python3.12.14でもコア試験が成功。compileall、拡張JS構文検査、架空デモも実行。初版の検証記録はTEST_REPORT.mdに保持しています。
 
 ## 会社PCでの検証が必要な範囲
 
@@ -27,7 +27,7 @@
 | Box SSO/DLP・同期遅延 | NOT_TESTED | 固定架空JSON配送と実測 |
 | SharePoint検索の範囲 | NOT_TESTED | 固定許可サイト検索と全文/抜粋比較 |
 
-GitHub ActionsはWindows/Linux・Python3.11/3.13で実行します。Windowsで見つかったテスト用ファイルとCLI日本語出力の文字コード問題を修正し、69件のunittestへ増やしました。WindowsではC#コンパイル、Chrome/Edge登録、実行ファイル→PythonのPing/日本語captureと拒否・解除の統合試験も追加しています。[最新の実行結果](https://github.com/mugi0227/AI-Agent/actions)を確認してください。会社の実ブラウザ・実機試験とは別です。
+GitHub ActionsはWindows/Linux・Python3.11/3.13でコア試験と実GUI操作試験を実行します。WindowsではC#コンパイル、Chrome/Edge登録、実行ファイル→PythonのPing/日本語captureと拒否・解除も試験します。[最新の実行結果](https://github.com/mugi0227/AI-Agent/actions)を確認してください。会社の実ブラウザ・実機試験とは別です。
 
 ## 未実装・意図的な非対応
 
