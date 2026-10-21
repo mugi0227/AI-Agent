@@ -6,7 +6,7 @@ from tkinter import ttk, simpledialog
 
 from .chat import copy_answer, error_help
 from .common import AssistantError
-from .ui_widgets import BG, MUTED, button, label
+from .ui_widgets import BG, MUTED, button, label, treeview
 
 STATUS = {"queued": "実行待ち", "running": "実行中", "waiting": "条件待ち", "completed": "完了", "failed": "失敗", "cancelled": "取消済み"}
 
@@ -21,9 +21,9 @@ class WorkPanel:
         button(bar, "定期実行", self.routines).pack(side="left", padx=8)
         button(bar, "保存した記憶", self.memories).pack(side="left")
         self.enabled = label(page, "", size=9, bg=BG, fg=MUTED); self.enabled.pack(anchor="w", padx=28, pady=(0, 10))
-        self.tree = ttk.Treeview(page, columns=("status", "agent"), height=5, selectmode="browse")
+        self.tree = treeview(page, columns=("status", "agent"), height=5, selectmode="browse")
         for key, title, width in [("#0", "依頼内容", 400), ("status", "状態", 100), ("agent", "担当", 150)]:
-            self.tree.heading(key, text=title); self.tree.column(key, width=width, stretch=key == "#0")
+            self.tree.heading(key, text=title, anchor="w"); self.tree.column(key, width=width, stretch=key == "#0")
         self.tree.pack(fill="x", padx=28); self.tree.bind("<<TreeviewSelect>>", lambda _: self.select())
         actions = tk.Frame(page, bg=BG); actions.pack(fill="x", padx=28, pady=10)
         button(actions, "実行", self.run_selected, primary=True).pack(side="left")
@@ -111,7 +111,7 @@ class WorkPanel:
 
     def source_list(self, sources):
         dialog=tk.Toplevel(self.app.root); dialog.title("出典の一覧"); dialog.geometry("760x500"); dialog.configure(bg=BG)
-        tree=ttk.Treeview(dialog,columns=("observed",),height=10)
+        tree=treeview(dialog,columns=("observed",),height=10)
         tree.heading("#0",text="資料名");tree.heading("observed",text="取得時刻")
         tree.column("#0",width=440);tree.column("observed",width=240)
         tree.pack(fill="both",expand=True,padx=20,pady=20)
@@ -144,8 +144,8 @@ class WorkPanel:
     def routines(self):
         dialog = tk.Toplevel(self.app.root); dialog.title("定期実行"); dialog.geometry("760x520"); dialog.configure(bg=BG)
         label(dialog, "登録した依頼を指定間隔で実行します。自動実行が有効な間だけ起動します。", size=9, bg=BG, fg=MUTED).pack(anchor="w", padx=20, pady=16)
-        tree = ttk.Treeview(dialog, columns=("interval", "status"), height=6)
-        for key, title in [("#0", "定期実行名"), ("interval", "間隔"), ("status", "状態")]: tree.heading(key, text=title)
+        tree = treeview(dialog, columns=("interval", "status"), height=6)
+        for key, title in [("#0", "定期実行名"), ("interval", "間隔"), ("status", "状態")]: tree.heading(key, text=title, anchor="w")
         tree.pack(fill="both", expand=True, padx=20)
         def reload():
             tree.delete(*tree.get_children())
@@ -174,7 +174,7 @@ class WorkPanel:
         label(dialog, "担当ごとに保存した記録を表示します。追加した内容はAIが参照できます。", size=9, fg=MUTED, bg=BG).pack(anchor="w", padx=20, pady=16)
         selector = ttk.Combobox(dialog, textvariable=namespace, values=[p["id"] for p in self.rt.work.profiles()], state="readonly")
         selector.pack(anchor="w", padx=20, pady=(0, 10))
-        tree = ttk.Treeview(dialog, columns=("kind",), height=7); tree.heading("#0", text="記録内容"); tree.heading("kind", text="種類")
+        tree = treeview(dialog, columns=("kind",), height=7); tree.heading("#0", text="記録内容"); tree.heading("kind", text="種類")
         tree.pack(fill="both", expand=True, padx=20)
         def reload():
             self.rt.agent.memory.prune(); tree.delete(*tree.get_children())

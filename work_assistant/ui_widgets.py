@@ -6,17 +6,43 @@ import math
 import tkinter as tk
 from tkinter import font, ttk
 
-BG = "#f4f6f8"
+from .ui_surfaces import RoundedPanel, RoundedButton, RoundedEntry, RoundedLabel, RoundedTreeview
+
+BG = "#f5f8f6"
 WHITE = "#ffffff"
-INK = "#182a3a"
-MUTED = "#5a6d7d"
-LINE = "#dde5eb"
-TEAL = "#087f78"
-SOFT = "#e9f5f2"
-NAV = "#142332"
-NAV_HOVER = "#243b4c"
-NAV_MUTED = "#a7bacb"
-ERROR = "#a83d33"
+INK = "#1c342b"
+MUTED = "#536b61"
+LINE = "#dce6df"
+TEAL = "#176b52"
+SOFT = "#e7f3ed"
+NAV = "#edf3ef"
+NAV_HOVER = "#dcece3"
+NAV_MUTED = "#526a5e"
+ERROR = "#a13e38"
+
+
+def _tab_image(root, fill, border=None):
+    # Native ttk tabs use a stretchable rounded image, preserving tab semantics.
+    size, radius = 36, 10
+    image = tk.PhotoImage(master=root, width=size, height=size)
+    def rgb(color): return tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+    def inside(x, y, inset=0):
+        edge = radius - inset
+        cx = min(max(x, radius), size - radius)
+        cy = min(max(y, radius), size - radius)
+        return inset <= x <= size - inset and inset <= y <= size - inset and (x - cx) ** 2 + (y - cy) ** 2 <= edge ** 2
+    background, foreground, stroke = rgb(BG), rgb(fill), rgb(border or fill)
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            samples = []
+            for dx, dy in ((.25, .25), (.75, .25), (.25, .75), (.75, .75)):
+                samples.append(foreground if inside(x+dx, y+dy, 1.5 if border else 0) else stroke if inside(x+dx, y+dy) else background)
+            row.append("#" + "".join(f"{round(sum(c[k] for c in samples)/4):02x}" for k in range(3)))
+        rows.append("{" + " ".join(row) + "}")
+    image.put(" ".join(rows))
+    return image
 
 
 def setup_theme(root):
@@ -27,11 +53,20 @@ def setup_theme(root):
         font.nametofont(name).configure(family=family, size=10)
     style = ttk.Style(root)
     style.theme_use("clam")
-    style.configure("TScrollbar", background="#c6d1da", troughcolor=BG, borderwidth=0, arrowsize=12)
+    style.configure("TScrollbar", background="#c8d8cf", troughcolor=BG, borderwidth=0, arrowsize=11)
     style.configure("TProgressbar", background=TEAL, troughcolor=SOFT, borderwidth=0)
-    style.configure("Treeview", font=(family, 10), rowheight=35, background=WHITE, fieldbackground=WHITE, foreground=INK, borderwidth=0)
-    style.configure("Treeview.Heading", font=(family, 9, "bold"), background=BG, foreground=MUTED)
+    style.configure("Treeview", font=(family, 10), rowheight=max(36, font.Font(family=family, size=10).metrics("linespace") + 12), background=WHITE, fieldbackground=WHITE, foreground=INK, borderwidth=0, relief="flat", lightcolor=WHITE, darkcolor=WHITE, bordercolor=WHITE)
+    style.configure("Treeview.Heading", font=(family, 9, "bold"), background=WHITE, foreground=MUTED, borderwidth=0, relief="flat", padding=(10, 10))
     style.map("Treeview", background=[("selected", SOFT)], foreground=[("selected", TEAL)])
+    style.configure("TNotebook", background=BG, borderwidth=0, bordercolor=BG, lightcolor=BG, darkcolor=BG, relief="flat", tabmargins=(0, 0, 0, 10))
+    style.configure("TNotebook.Tab", background=NAV, foreground=MUTED, font=(family, 9), padding=(12, 9), borderwidth=0)
+    style.map("TNotebook.Tab", foreground=[("selected", TEAL), ("active", INK)], expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))])
+    root._tab_images = [_tab_image(root, BG), _tab_image(root, SOFT), _tab_image(root, NAV_HOVER), _tab_image(root, SOFT, TEAL)]
+    normal, selected, hover, focused = root._tab_images
+    style.element_create("Rounded.tab", "image", normal, ("selected", "focus", focused), ("selected", selected), ("active", hover), border=10, sticky="nsew")
+    style.layout("TNotebook.Tab", [("Rounded.tab", {"sticky": "nsew", "children": [("Notebook.padding", {"side": "top", "sticky": "nsew", "children": [("Notebook.label", {"side": "top", "sticky": ""})]})]})])
+    style.configure("TCombobox", fieldbackground=WHITE, background=WHITE, foreground=INK, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, arrowsize=14, padding=8)
+    style.map("TCombobox", fieldbackground=[("readonly", WHITE)], selectbackground=[("readonly", SOFT)], selectforeground=[("readonly", INK)])
     root.configure(bg=BG)
     return family, mono
 
@@ -42,21 +77,27 @@ def label(parent, text="", *, size=10, bold=False, fg=INK, bg=WHITE, **kwargs):
 
 
 def button(parent, text, command, *, primary=False, dark=False, **kwargs):
-    bg, fg = (TEAL, WHITE) if primary else (NAV_HOVER, WHITE) if dark else (WHITE, INK)
-    widget = tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground="#096b65" if primary else NAV_HOVER if dark else SOFT,
-                       activeforeground=WHITE if primary or dark else TEAL, disabledforeground="#91a2ae", relief="flat",
-                       borderwidth=0, padx=13, pady=8, cursor="hand2", takefocus=True,
-                       highlightthickness=1, highlightbackground=bg, highlightcolor=TEAL,
-                       font=(parent._root().ui_font, 10), **kwargs)
-    return widget
+    fill = TEAL if primary else NAV if dark else WHITE
+    foreground = WHITE if primary else INK
+    return RoundedButton(parent, text, command, fill=fill, foreground=foreground,
+        hover="#125c46" if primary else NAV_HOVER if dark else SOFT,
+        pressed="#0e4e3a" if primary else "#d1e6da", border=None if primary or dark else LINE,
+        focus=WHITE if primary else TEAL, disabled_fill="#eaf0ec", disabled_foreground="#687b70",
+        font=(parent._root().ui_font, 10), **kwargs)
 
 
 def entry(parent, variable=None, *, dark=False, **kwargs):
-    return tk.Entry(parent, textvariable=variable, relief="flat", borderwidth=0,
-                    bg=NAV_HOVER if dark else WHITE, fg=WHITE if dark else INK,
-                    insertbackground=WHITE if dark else TEAL, highlightthickness=1,
-                    highlightbackground=NAV_HOVER if dark else LINE, highlightcolor=TEAL,
-                    font=(parent._root().ui_font, 10), **kwargs)
+    return RoundedEntry(parent, variable, fill=WHITE, foreground=INK, border=LINE,
+                        focus=TEAL, font=(parent._root().ui_font, 10), **kwargs)
+
+
+def badge(parent, text="", *, fill=SOFT, foreground=TEAL, **kwargs):
+    return RoundedLabel(parent, text, fill=fill, foreground=foreground,
+                        font=(parent._root().ui_font, 9), **kwargs)
+
+
+def treeview(parent, **kwargs):
+    return RoundedTreeview(parent, fill=WHITE, border=LINE, **kwargs)
 
 
 class ScrollFrame(tk.Frame):
@@ -135,18 +176,17 @@ def insert_markdown(widget: tk.Text, text: str):
     widget.configure(state="disabled")
 
 
-class MessageCard(tk.Frame):
+class MessageCard(RoundedPanel):
     def __init__(self, parent, *, role="assistant", text="", timestamp="", status="", on_copy=None):
-        bg = "#eaf1f4" if role == "user" else WHITE
-        super().__init__(parent, bg=bg, highlightbackground=LINE, highlightthickness=1, padx=18, pady=15)
+        bg = SOFT if role == "user" else WHITE
+        super().__init__(parent, fill=bg, border=None if role == "user" else LINE, radius=16, padding=(20, 18))
         self.pack(fill="x", padx=28, pady=(0, 14))
         self.bg = bg
-        top = tk.Frame(self, bg=bg); top.pack(fill="x")
-        label(top, "YOU" if role == "user" else "WA", size=8, bold=True, fg=WHITE, bg=MUTED if role == "user" else TEAL, padx=6, pady=4).pack(side="left", padx=(0, 9))
+        top = tk.Frame(self.content, bg=bg); top.pack(fill="x")
         label(top, "あなた" if role == "user" else "Work Assistant", bold=True, bg=bg).pack(side="left")
         label(top, timestamp, size=8, fg=MUTED, bg=bg).pack(side="left", padx=10)
         self.state_label = label(top, status, size=8, fg=TEAL, bg=bg); self.state_label.pack(side="right")
-        self.body = tk.Text(self, wrap="word", width=1, height=2, relief="flat", borderwidth=0,
+        self.body = tk.Text(self.content, wrap="word", width=1, height=2, relief="flat", borderwidth=0,
                             font=(self._root().ui_font, 11), bg=bg, fg=INK,
                             padx=0, pady=0, spacing1=0, spacing3=3, highlightthickness=0, selectbackground="#b8e4dc", cursor="xterm")
         self.body.tag_configure("strong", font=(self._root().ui_font, 11, "bold"))
@@ -157,7 +197,7 @@ class MessageCard(tk.Frame):
         self.body.pack(fill="x", pady=(12, 0))
         self._height_job = None
         self.body.bind("<Configure>", self._resize)
-        self.footer = tk.Frame(self, bg=bg); self.footer.pack(fill="x", pady=(8, 0))
+        self.footer = tk.Frame(self.content, bg=bg); self.footer.pack(fill="x", pady=(8, 0))
         if on_copy:
             copy = button(self.footer, "コピー", lambda: on_copy(self.raw_text)); copy.configure(pady=4); copy.pack(side="right")
         self.expanded = False

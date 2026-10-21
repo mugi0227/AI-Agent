@@ -12,7 +12,7 @@ from .common import AssistantError, safe_code, stamp
 from .config import minute_of_day
 from .security import expanded, validate_bedrock
 from .setup_flow import SetupError, connection_fingerprint, probe_connection, validate_setup
-from .ui_widgets import BG, WHITE, INK, MUTED, TEAL, ERROR, ScrollFrame, button, entry, label
+from .ui_widgets import BG, WHITE, INK, MUTED, TEAL, LINE, SOFT, ERROR, ScrollFrame, RoundedPanel, button, entry, label
 
 AUTH_NAMES = {"sigv4": "AWSプロファイル・SSO", "api_key": "環境変数のBedrock APIキー"}
 
@@ -26,21 +26,23 @@ class SettingsPanel:
         self.events = queue.Queue()
         self.vars, self.fields, self.field_tabs = {}, {}, {}
         self.inputs, self.buttons = [], []
-        self.status = tk.StringVar(value="1 保存と資料 → 2 AI接続 → 3 接続テストの順に設定してください。")
-        label(parent, "初期設定・設定の変更", size=18, bold=True, bg=BG).pack(anchor="w", padx=24, pady=(20, 5))
-        label(parent, "保存後すぐに反映されます。定期実行は必要な場合だけ設定します。", size=9, fg=MUTED, bg=BG).pack(anchor="w", padx=24, pady=(0, 12))
-        footer = tk.Frame(parent, bg=BG); footer.pack(side="bottom", fill="x", padx=24, pady=(8, 15))
-        self.status_label = label(footer, textvariable=self.status, size=9, bg=BG, wraplength=650, justify="left")
+        self.status = tk.StringVar(value="設定は保存後すぐに反映されます。定期実行は任意です。")
+        label(parent, "保存と資料、AI接続、接続確認の順に設定してください。", size=10, fg=MUTED, bg=BG).pack(anchor="w", padx=24, pady=(20, 16))
+        footer_panel = RoundedPanel(parent, fill=WHITE, border=None, radius=14, padding=(16, 12))
+        footer_panel.pack(side="bottom", fill="x", padx=24, pady=(12, 15))
+        footer = footer_panel.content
+        self.status_label = label(footer, textvariable=self.status, size=9, bg=WHITE, wraplength=650, justify="left")
         self.status_label.pack(fill="x", pady=(0, 8))
-        actions = tk.Frame(footer, bg=BG); actions.pack(fill="x")
+        actions = tk.Frame(footer, bg=WHITE); actions.pack(fill="x")
         self.save_button = button(actions, "設定を保存", lambda: self.submit(False)); self.save_button.pack(side="left")
         self.test_button = button(actions, "保存して接続テスト", lambda: self.submit(True), primary=True); self.test_button.pack(side="left", padx=8)
         self.chat_button = button(actions, "質問画面へ", self.go_chat); self.chat_button.pack(side="right")
         self.tabs = ttk.Notebook(parent); self.tabs.pack(fill="both", expand=True, padx=24)
         self.frames = []
         for title in ("1 保存と資料", "2 AI接続", "3 接続確認", "定期実行（任意）"):
-            scroll = ScrollFrame(self.tabs); self.tabs.add(scroll, text=title); self.frames.append(scroll)
-            scroll.inner.configure(padx=15, pady=15)
+            panel = RoundedPanel(self.tabs, fill=WHITE, border=LINE, padding=16)
+            scroll = ScrollFrame(panel.content, bg=WHITE); scroll.pack(fill="both", expand=True)
+            self.tabs.add(panel, text=title); self.frames.append(scroll)
         self._build_local(); self._build_connection(); self._build_review(); self._build_automation()
         for scroll in self.frames: scroll.bind_wheel(scroll.inner)
         self.refresh()
@@ -53,37 +55,38 @@ class SettingsPanel:
 
     def field(self, tab, name, title, value, hint=""):
         parent = self.frames[tab].inner
-        row = tk.Frame(parent, bg=BG); row.pack(fill="x", pady=(0, 12))
-        label(row, title, size=10, bold=True, bg=BG).pack(anchor="w")
+        row = tk.Frame(parent, bg=WHITE); row.pack(fill="x", pady=(0, 12))
+        label(row, title, size=10, bold=True, bg=WHITE).pack(anchor="w")
         widget = entry(row, self.variable(name, value)); widget.pack(fill="x", ipady=7, pady=(4, 0))
-        if hint: label(row, hint, size=9, fg=MUTED, bg=BG, wraplength=620, justify="left").pack(fill="x", pady=(3, 0))
+        if hint: label(row, hint, size=9, fg=MUTED, bg=WHITE, wraplength=620, justify="left").pack(fill="x", pady=(3, 0))
+        widget.field_row = row
         self.fields[name], self.field_tabs[name] = widget, tab
         self.inputs.append(widget)
         return widget
 
     def check(self, tab, name, title, value):
         widget = tk.Checkbutton(self.frames[tab].inner, text=title, variable=self.variable(name, value, True),
-            bg=BG, fg=INK, activebackground=BG, selectcolor=WHITE, anchor="w", justify="left", wraplength=610,
-            font=(self.app.root.ui_font, 10), padx=0, takefocus=True)
+            bg=WHITE, fg=INK, activebackground=WHITE, selectcolor=WHITE, anchor="w", justify="left", wraplength=610,
+            font=(self.app.root.ui_font, 10), padx=0, takefocus=True, highlightthickness=0)
         widget.pack(fill="x", pady=(0, 12)); self.inputs.append(widget)
         self.fields[name], self.field_tabs[name] = widget, tab
         return widget
 
     def _build_local(self):
         parent = self.frames[0].inner
-        label(parent, "会話と取得した資料は、このPCのアプリ保存先に保存します。", fg=MUTED, bg=BG, wraplength=620).pack(fill="x", pady=(0, 12))
+        label(parent, "会話と取得した資料は、このPCのアプリ保存先に保存します。", fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 12))
         self.check(0, "local_data_approved", "会社の利用条件を確認し、会話と選択した資料のローカル保存を許可する", self.base.local_data_approved)
-        label(parent, "利用する資料フォルダ（資料を使う場合）", bold=True, bg=BG).pack(anchor="w")
-        label(parent, "選んだフォルダ内の対応ファイルを検索対象にします。", size=9, fg=MUTED, bg=BG).pack(anchor="w", pady=(4, 8))
-        self.roots = tk.Listbox(parent, height=4, font=(self.app.root.ui_font, 10), exportselection=False, bg=WHITE, relief="flat")
+        label(parent, "利用する資料フォルダ（資料を使う場合）", bold=True, bg=WHITE).pack(anchor="w")
+        label(parent, "選んだフォルダ内の対応ファイルを検索対象にします。", size=9, fg=MUTED, bg=WHITE).pack(anchor="w", pady=(4, 8))
+        self.roots = tk.Listbox(parent, height=3, font=(self.app.root.ui_font, 10), exportselection=False, bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=TEAL, relief="flat", highlightthickness=1, highlightbackground=LINE, highlightcolor=TEAL, borderwidth=0)
         self.roots.pack(fill="x"); self.inputs.append(self.roots)
         self.fields["roots"], self.field_tabs["roots"] = self.roots, 0
         for root in self.base.roots: self.roots.insert("end", root)
-        bar = tk.Frame(parent, bg=BG); bar.pack(fill="x", pady=(8, 14))
+        bar = tk.Frame(parent, bg=WHITE); bar.pack(fill="x", pady=(8, 14))
         for title, command in (("フォルダを追加", self.add_root), ("選択を削除", self.remove_root)):
             widget = button(bar, title, command); widget.pack(side="left", padx=(0, 8)); self.buttons.append(widget)
-        label(parent, "対応形式: TXT・Markdown・CSV・JSON・HTML・EML・VTT・Word・Excel・PowerPoint。PDFは追加ライブラリが必要です。", size=9, fg=MUTED, bg=BG, wraplength=620, justify="left").pack(fill="x", pady=(0, 12))
-        label(parent, "資料なしでも質問できます。資料の追加は設定後の「資料を追加」から行います。", size=9, fg=MUTED, bg=BG, wraplength=620, justify="left").pack(fill="x", pady=(0, 16))
+        label(parent, "対応形式: TXT・Markdown・CSV・JSON・HTML・EML・VTT・Word・Excel・PowerPoint。PDFは追加ライブラリが必要です。", size=9, fg=MUTED, bg=WHITE, wraplength=620, justify="left").pack(fill="x", pady=(0, 12))
+        label(parent, "資料なしでも質問できます。資料の追加は設定後の「資料を追加」から行います。", size=9, fg=MUTED, bg=WHITE, wraplength=620, justify="left").pack(fill="x", pady=(0, 16))
         button(parent, "次へ：AI接続", lambda: self.tabs.select(1)).pack(anchor="e")
 
     def add_root(self):
@@ -99,21 +102,21 @@ class SettingsPanel:
 
     def _build_connection(self):
         parent = self.frames[1].inner; cfg = self.base.bedrock
-        label(parent, "会社から指定された地域・モデルID・認証方式を入力してください。", size=9, fg=MUTED, bg=BG, wraplength=620).pack(fill="x", pady=(0, 14))
+        label(parent, "会社から指定された地域・モデルID・認証方式を入力してください。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
         self.check(1, "enabled", "AIへの接続を有効にする", cfg.enabled)
         self.field(1, "region", "AWSの地域", cfg.region, "例: ap-northeast-1。地域を変えると標準の接続先も更新します。")
         self.field(1, "model", "モデルID・推論プロファイルID", cfg.model, "会社で利用を許可されたIDを指定してください。")
-        label(parent, "認証方式", bold=True, bg=BG).pack(anchor="w")
+        label(parent, "認証方式", bold=True, bg=WHITE).pack(anchor="w")
         auth = ttk.Combobox(parent, textvariable=self.variable("auth", AUTH_NAMES[cfg.auth]), values=list(AUTH_NAMES.values()), state="readonly")
         auth.pack(fill="x", pady=(5, 12)); self.inputs.append(auth)
         self.field(1, "profile", "AWSプロファイル名", cfg.profile, "AWSプロファイル・SSO方式で使用。空欄は既定の認証設定を使用します。SSOは会社の手順で事前にログインしてください。")
         self.field(1, "api_key_env", "APIキーの環境変数名", cfg.api_key_env, "APIキー方式で使用。キー本体は入力しません。会社の手順で登録した環境変数名を指定します。")
         self.check(1, "data_transfer_approved", "会社の承認範囲で、質問・参照資料をBedrockへ送信することを許可する", cfg.data_transfer_approved)
         self.check(1, "cross_region_approved", "推論プロファイルの処理地域を確認し、地域をまたぐ処理を許可する", cfg.cross_region_approved)
-        label(parent, "Bedrock Runtimeの推論プロファイルを使う場合、処理地域の許可も必要です。", size=9, fg=MUTED, bg=BG, wraplength=620).pack(fill="x", pady=(0, 14))
+        label(parent, "Bedrock Runtimeの推論プロファイルを使う場合、処理地域の許可も必要です。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
         self.advanced = tk.BooleanVar(value=False)
-        advanced = tk.Frame(parent, bg=BG)
-        toggle = tk.Checkbutton(parent, text="接続先・証明書・利用上限を表示", variable=self.advanced, bg=BG, font=(self.app.root.ui_font, 10), command=lambda: advanced.pack(fill="x") if self.advanced.get() else advanced.pack_forget())
+        advanced = tk.Frame(parent, bg=WHITE)
+        toggle = tk.Checkbutton(parent, text="接続先・証明書・利用上限を表示", variable=self.advanced, bg=WHITE, font=(self.app.root.ui_font, 10), command=lambda: advanced.pack(fill="x") if self.advanced.get() else advanced.pack_forget())
         toggle.pack(anchor="w", pady=(0, 10)); self.inputs.append(toggle)
         # Optional fields use the same validation and persistence as the main form.
         for name, title, value, hint in (
@@ -121,10 +124,10 @@ class SettingsPanel:
             ("ca_bundle", "会社のCA証明書ファイル（任意）", cfg.ca_bundle, "空欄はOS・Pythonの既定の信頼設定を使用します。"),
             ("daily_calls", "1日のAI呼び出し上限", cfg.daily_calls, "接続テストも最大2回分を使用します。"),
             ("daily_tokens", "1日のトークン上限", cfg.daily_tokens, "")):
-            row = tk.Frame(advanced, bg=BG); row.pack(fill="x", pady=(0, 12))
-            label(row, title, bold=True, bg=BG).pack(anchor="w")
+            row = tk.Frame(advanced, bg=WHITE); row.pack(fill="x", pady=(0, 12))
+            label(row, title, bold=True, bg=WHITE).pack(anchor="w")
             widget = entry(row, self.variable(name, value)); widget.pack(fill="x", ipady=7, pady=4)
-            if hint: label(row, hint, size=9, fg=MUTED, bg=BG, wraplength=620).pack(fill="x")
+            if hint: label(row, hint, size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x")
             self.fields[name], self.field_tabs[name] = widget, 1; self.inputs.append(widget)
         self.advanced_frame = advanced
         self._last_region = cfg.region
@@ -136,7 +139,7 @@ class SettingsPanel:
     def auth_changed(self, *_):
         is_profile = self.vars["auth"].get() == AUTH_NAMES["sigv4"]
         for name, visible in (("profile", is_profile), ("api_key_env", not is_profile)):
-            row = self.fields[name].master
+            row = self.fields[name].field_row
             if visible: row.pack(fill="x", pady=(0, 12), before=self.fields["data_transfer_approved"])
             else: row.pack_forget()
 
@@ -148,17 +151,19 @@ class SettingsPanel:
 
     def _build_review(self):
         parent = self.frames[2].inner
-        self.summary = label(parent, "", size=11, bg=BG, wraplength=620, justify="left"); self.summary.pack(fill="x", pady=(0, 15))
-        label(parent, "下の「保存して接続テスト」で、AIの応答とツール呼び出しを確認します。テスト用の短い文字列のみを送り、業務資料や会話履歴は送信しません。最大2回のAI呼び出しが発生し、利用料金と利用上限の対象になります。", fg=MUTED, size=9, bg=BG, wraplength=620, justify="left").pack(fill="x", pady=(0, 15))
-        self.probe_label = label(parent, "", bold=True, bg=BG, wraplength=620, justify="left"); self.probe_label.pack(fill="x", pady=(0, 15))
+        self.summary = label(parent, "", size=11, bg=WHITE, wraplength=620, justify="left"); self.summary.pack(fill="x", pady=(0, 15))
+        label(parent, "下の「保存して接続テスト」で、AIの応答とツール呼び出しを確認します。テスト用の短い文字列のみを送り、業務資料や会話履歴は送信しません。最大2回のAI呼び出しが発生し、利用料金と利用上限の対象になります。", fg=MUTED, size=9, bg=WHITE, wraplength=620, justify="left").pack(fill="x", pady=(0, 15))
+        self.probe_label = label(parent, "", bold=True, bg=WHITE, wraplength=620, justify="left"); self.probe_label.pack(fill="x", pady=(0, 15))
         button(parent, "オフライン診断", self.app.diagnose).pack(anchor="w")
-        self.app.info_view = self.app.text(parent)
+        self.app.info_view = self.app.text(parent, surface=False)
+        self.app.info_view.configure(height=10)
+        self.app.info_view.pack_forget()
 
     def _build_automation(self):
         cfg = self.base
         self.check(3, "durable_work_enabled", "保存した継続タスク・定期実行を自動で実行する", cfg.durable_work_enabled)
         self.check(3, "heartbeat_enabled", "資料の変化や期限を定期的に確認する", cfg.heartbeat_enabled)
-        label(self.frames[3].inner, "アプリを起動している間に動作します。自動実行を無効にしても、継続タスクは「実行管理」から手動実行できます。", size=9, fg=MUTED, bg=BG, wraplength=620).pack(fill="x", pady=(0, 15))
+        label(self.frames[3].inner, "アプリを起動している間に動作します。自動実行を無効にしても、継続タスクは「実行管理」から手動実行できます。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 15))
         self.field(3, "active_start", "定期確認の開始時刻", cfg.active_start, "HH:MM形式。例: 08:00。")
         self.field(3, "active_end", "定期確認の終了時刻", cfg.active_end)
         self.field(3, "notification_daily_limit", "1日の通知上限", cfg.notification_daily_limit)
@@ -272,6 +277,7 @@ class SettingsPanel:
             suffix = "「質問画面へ」から質問できます。" if self.app.ready() else "次に「AI接続」で必要な項目を設定してください。"
             self.status.set("設定を保存して反映しました。" + suffix); self.status_label.configure(fg=TEAL)
         self.app.diagnostic_report = None
+        self.app.info_view.pack_forget()
         self.app.refresh(schedule=False)
         if not self.app.message_rows and not self.app.loading: self.app.render_messages()
 

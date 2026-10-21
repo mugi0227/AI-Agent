@@ -14,10 +14,12 @@ from .chat import ChatController, error_help, display_answer, copy_answer, TOOL_
 from .common import AssistantError, safe_code
 from .runtime import Runtime
 from .ui_widgets import (BG, WHITE, INK, MUTED, LINE, TEAL, SOFT, NAV, NAV_HOVER, NAV_MUTED,
-                         ERROR, MessageCard, ScrollFrame, button, entry, label, setup_theme)
+                         ERROR, MessageCard, ScrollFrame, RoundedPanel, button, entry, label, badge, treeview, setup_theme)
 
 PAGE_TITLES = {"chat": "会話", "documents": "資料・検索", "proposals": "承認待ち",
                "tasks": "タスク・案件", "work": "実行管理", "notifications": "通知", "settings": "接続・設定"}
+DOCUMENT_TYPES = {"document": "文書", "transcript": "文字起こし", "capture": "Webページ",
+                  "mail": "メール", "teams_message": "Teamsメッセージ", "calendar": "予定", "search_result": "検索結果"}
 
 
 def short_time(value):
@@ -87,17 +89,18 @@ class Desktop:
         tk.Frame(self.sidebar, bg=NAV_HOVER, height=1).pack(side="bottom", fill="x", padx=16)
         tk.Checkbutton(self.sidebar, text="保管済みを表示", variable=self.show_archived, command=self.refresh_sessions,
                        bg=NAV, fg=NAV_MUTED, activebackground=NAV, activeforeground=WHITE,
-                       selectcolor=NAV_HOVER, font=(self.root.ui_font, 9), borderwidth=0).pack(side="bottom", anchor="w", padx=14, pady=8)
+                       selectcolor=WHITE, font=(self.root.ui_font, 9), borderwidth=0, highlightthickness=0).pack(side="bottom", anchor="w", padx=14, pady=8)
         brand = tk.Frame(self.sidebar, bg=NAV); brand.pack(fill="x", padx=16, pady=(18, 16))
-        label(brand, "W", size=16, bold=True, bg=TEAL, fg=WHITE, padx=8, pady=2).pack(side="left", padx=(0, 9))
-        label(brand, "Work Assistant", size=11, bold=True, bg=NAV, fg=WHITE).pack(side="left")
-        button(self.sidebar, "+  新しい会話", self.new_session, primary=True).pack(fill="x", padx=16, pady=(0, 12))
+        logo = RoundedPanel(brand, fill=TEAL, radius=10, padding=(9, 5)); logo.pack(side="left", padx=(0, 10))
+        label(logo.content, "W", size=14, bold=True, bg=TEAL, fg=WHITE).pack()
+        label(brand, "Work Assistant", size=11, bold=True, bg=NAV, fg=INK).pack(side="left")
+        button(self.sidebar, "新しい会話", self.new_session, primary=True).pack(fill="x", padx=16, pady=(0, 12))
         entry(self.sidebar, self.session_filter, dark=True).pack(fill="x", padx=16, ipady=7)
         label(self.sidebar, "会話を検索", size=8, bg=NAV, fg=NAV_MUTED).pack(anchor="w", padx=18, pady=(3, 8))
         self.session_caption = label(self.sidebar, "最近の会話", size=9, bold=True, bg=NAV, fg=NAV_MUTED)
         self.session_caption.pack(anchor="w", padx=18, pady=(0, 4))
-        self.session_list = tk.Listbox(self.sidebar, bg=NAV, fg="#dfebf3", selectbackground=NAV_HOVER,
-                                       selectforeground=WHITE, relief="flat", borderwidth=0, highlightthickness=0,
+        self.session_list = tk.Listbox(self.sidebar, bg=NAV, fg=INK, selectbackground=NAV_HOVER,
+                                       selectforeground=TEAL, relief="flat", borderwidth=0, highlightthickness=0,
                                        activestyle="none", exportselection=False, font=(self.root.ui_font, 10),
                                        selectborderwidth=0, height=1)
         self.session_list.pack(fill="both", expand=True, padx=12)
@@ -107,12 +110,11 @@ class Desktop:
         header = tk.Frame(self.main, bg=WHITE, padx=28, pady=17); header.pack(fill="x")
         text = tk.Frame(header, bg=WHITE)
         self.section_label = label(text, "会話", size=8, bold=True, fg=MUTED)
-        self.section_label.pack(anchor="w")
-        self.heading = label(text, "新しい会話", size=17, bold=True); self.heading.pack(anchor="w", pady=(4, 0))
+        self.heading = label(text, "新しい会話", size=17, bold=True); self.heading.pack(anchor="w")
         tk.Checkbutton(header, text="集中モード", variable=self.focus, command=self.set_focus,
                        bg=WHITE, fg=MUTED, activebackground=WHITE, selectcolor=SOFT,
-                       font=(self.root.ui_font, 9), borderwidth=0).pack(side="right", padx=(14, 0))
-        self.connection_badge = label(header, "", size=9, fg=TEAL, bg=SOFT, padx=10, pady=6)
+                       font=(self.root.ui_font, 9), borderwidth=0, highlightthickness=0).pack(side="right", padx=(14, 0))
+        self.connection_badge = badge(header)
         self.connection_badge.pack(side="right")
         text.pack(side="left", fill="x", expand=True)
         tk.Frame(self.main, bg=LINE, height=1).pack(fill="x")
@@ -125,32 +127,37 @@ class Desktop:
         label(tools, "履歴と下書きはこのPCに保存", size=8, fg=MUTED, bg=BG).pack(side="left")
         self.archive_button = button(tools, "保管する", self.archive_current); self.archive_button.pack(side="right", padx=(7, 0))
         button(tools, "名前を変更", self.rename_current).pack(side="right")
-        self.notice = tk.Frame(page, bg="#fff5df", padx=16, pady=10)
-        self.notice_label = label(self.notice, "", size=9, bg="#fff5df", fg="#795924", wraplength=620)
+        self.notice = RoundedPanel(page, fill="#fff5df", radius=12, padding=(16, 10))
+        self.notice_label = label(self.notice.content, "", size=9, bg="#fff5df", fg="#795924", wraplength=620)
         self.notice_label.pack(side="left", fill="x", expand=True)
-        button(self.notice, "接続・設定へ", lambda: self.show_page("settings")).pack(side="right", padx=(10, 0))
+        button(self.notice.content, "接続・設定へ", lambda: self.show_page("settings")).pack(side="right", padx=(10, 0))
         self.composer_shell = tk.Frame(page, bg=BG, padx=28, pady=12); self.composer_shell.pack(side="bottom", fill="x")
         self.jump = button(self.composer_shell, "最新のメッセージへ ↓", lambda: self.thread.bottom(force=True))
         self.attachment_strip = tk.Frame(self.composer_shell, bg=BG); self.attachment_strip.pack(fill="x", pady=(0, 6))
-        shell = tk.Frame(self.composer_shell, bg=WHITE, highlightbackground=LINE, highlightthickness=1, padx=15, pady=12)
-        shell.pack(fill="x")
+        self.composer_surface = RoundedPanel(self.composer_shell, fill=WHITE, border=LINE, radius=18, padding=(18, 14))
+        self.composer_surface.pack(fill="x")
+        shell = self.composer_surface.content
         self.input = tk.Text(shell, wrap="word", height=3, width=1, relief="flat", borderwidth=0,
                              undo=True, maxundo=80, font=(self.root.ui_font, 11), bg=WHITE, fg=INK,
-                             insertbackground=TEAL, padx=0, pady=3, selectbackground="#b8e4dc")
+                             insertbackground=TEAL, padx=0, pady=3, highlightthickness=0, selectbackground="#d2ece1")
         self.input.pack(fill="x")
-        self.placeholder = label(self.input, "質問を入力してください。資料の添付もできます。", size=10, fg=MUTED)
+        self.placeholder = label(self.input, "質問を入力してください。資料の添付もできます。", size=10, fg=MUTED, wraplength=560, justify="left")
         self.placeholder.place(x=2, y=3)
         self.placeholder.bind("<Button-1>", lambda _: self.input.focus_set())
         self.input.bind("<<Modified>>", self.draft_changed)
         self.input.bind("<Control-Return>", self.send_shortcut)
         self.input.bind("<Control-KP_Enter>", self.send_shortcut)
         bar = tk.Frame(shell, bg=WHITE); bar.pack(fill="x", pady=(7, 0))
-        self.attach_button = button(bar, "+  資料を添える", self.choose_documents); self.attach_button.pack(side="left")
+        self.attach_button = button(bar, "資料を添える", self.choose_documents); self.attach_button.pack(side="left")
         self.counter = label(bar, "0 / 10,000", size=8, fg=MUTED); self.counter.pack(side="left", padx=12)
-        self.register_work = button(bar, "継続タスクに登録", self.register_durable_work); self.register_work.pack(side="left")
-        self.send = button(bar, "送信  ↑", self.ask, primary=True); self.send.pack(side="right")
-        self.stop_button = button(bar, "■  停止", self.stop); self.stop_button.pack(side="right", padx=7)
-        label(self.composer_shell, "送信: この会話で回答  ·  継続タスクに登録: 依頼を保存して実行状態を管理", size=8, fg=MUTED, bg=BG, wraplength=650).pack(anchor="w", pady=(7, 0))
+        secondary = tk.Frame(self.composer_shell, bg=BG)
+        self.register_work = button(secondary, "継続タスクに登録", self.register_durable_work)
+        self.register_work.configure(pady=4)
+        self.register_work.pack(side="left")
+        label(secondary, "依頼を保存して実行状態を管理", size=8, fg=MUTED, bg=BG).pack(side="left", padx=10)
+        self.send = button(bar, "送信", self.ask, primary=True); self.send.pack(side="right")
+        self.stop_button = button(bar, "停止", self.stop); self.stop_button.pack(side="right", padx=7)
+        secondary.pack(fill="x", pady=(10, 0))
         label(self.composer_shell, "Enterで改行  ·  Ctrl+Enterで送信  ·  Ctrl+Nで新しい会話  ·  Escで停止", size=8, fg=MUTED, bg=BG).pack(anchor="w", pady=(7, 0))
         self.thread = ScrollFrame(page, on_scroll=self.thread_scrolled); self.thread.pack(fill="both", expand=True)
 
@@ -163,9 +170,9 @@ class Desktop:
         button(toolbar, "資料を追加", self.import_documents, primary=True).pack(side="left", padx=(0, 8))
         button(toolbar, "再走査", self.scan).pack(side="left")
         label(page, "取得済みの資料を検索し、選んだ資料を会話に添えられます。", fg=MUTED, bg=BG).pack(anchor="w", padx=28)
-        self.document_list = ttk.Treeview(page, columns=("kind", "observed"), selectmode="extended", height=9)
+        self.document_list = treeview(page, columns=("kind", "observed"), selectmode="extended", height=9)
         for name, title, width in [("#0", "資料名", 360), ("kind", "種類", 90), ("observed", "取得", 110)]:
-            self.document_list.heading(name, text=title); self.document_list.column(name, width=width, stretch=name == "#0")
+            self.document_list.heading(name, text=title, anchor="w"); self.document_list.column(name, width=width, stretch=name == "#0")
         self.document_list.pack(fill="x", padx=28, pady=16)
         self.document_list.bind("<<TreeviewSelect>>", self.preview_search)
         self.document_list.bind("<Double-1>", lambda _: self.open_selected_document())
@@ -198,17 +205,24 @@ class Desktop:
         from .ui_settings import SettingsPanel
         self.settings_panel = SettingsPanel(self, self.pages["settings"])
 
-    def text(self, parent):
+    def text(self, parent, *, surface=True):
+        if surface:
+            panel = RoundedPanel(parent, fill=WHITE, border=LINE, padding=16)
+            panel.pack(fill="both", expand=True, padx=24, pady=(0, 20)); parent = panel.content
         widget = ScrolledText(parent, wrap="word", relief="flat", borderwidth=0,
-                              bg=WHITE, fg=INK, padx=18, pady=15, font=(self.root.ui_font, 10))
-        widget.pack(fill="both", expand=True, padx=28, pady=(0, 22)); widget.configure(state="disabled")
+                              bg=WHITE, fg=INK, padx=0, pady=0, font=(self.root.ui_font, 10), highlightthickness=0)
+        widget.vbar.configure(bg="#c8d8cf", activebackground="#adC4b6", troughcolor=WHITE,
+                              relief="flat", borderwidth=0, highlightthickness=0, width=11, elementborderwidth=0)
+        widget.pack(fill="both", expand=True); widget.configure(state="disabled")
         return widget
 
     def listbox(self, parent, height):
-        widget = tk.Listbox(parent, height=height, font=(self.root.ui_font, 10), relief="flat", borderwidth=0,
+        panel = RoundedPanel(parent, fill=WHITE, border=LINE, padding=10)
+        panel.pack(fill="x", padx=24)
+        widget = tk.Listbox(panel.content, height=height, font=(self.root.ui_font, 10), relief="flat", borderwidth=0,
                             bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=TEAL,
-                            highlightbackground=LINE, highlightthickness=1, exportselection=False, activestyle="none")
-        widget.pack(fill="x", padx=28); return widget
+                            highlightthickness=0, exportselection=False, activestyle="none")
+        widget.pack(fill="x"); return widget
 
     @staticmethod
     def replace(widget, text):
@@ -231,7 +245,7 @@ class Desktop:
         for page in self.pages.values(): page.pack_forget()
         self.pages[name].pack(fill="both", expand=True); self.current_page = name
         for key, nav in self.nav_buttons.items():
-            nav.configure(bg=NAV_HOVER if key == name else NAV, highlightbackground=NAV_HOVER if key == name else NAV)
+            nav.configure(bg=NAV_HOVER if key == name else NAV, fg=TEAL if key == name else INK)
         title = self.rt.store.session(self.current_session)["title"] if name == "chat" else PAGE_TITLES[name]
         self.section_label.configure(text=PAGE_TITLES[name])
         self.heading.configure(text=title[:26] + ("…" if len(title) > 26 else ""))
@@ -393,24 +407,24 @@ class Desktop:
                 for did in meta["document_ids"]:
                     try: title = self.rt.store.get_document(did)["title"]
                     except AssistantError: title = "利用できない資料"
-                    source_button = button(card, "添付資料  " + title[:40], lambda d=did: self.open_document(d))
+                    source_button = button(card.content, "添付資料  " + title[:40], lambda d=did: self.open_document(d))
                     source_button.configure(wraplength=540); source_button.pack(anchor="w", pady=(5, 0))
             if item["role"] == "user" and item["status"] == "completed":
                 button(card.footer, "質問を編集", lambda row=item: self.edit_question(row)).pack(side="left")
             if item["status"] in ("failed", "cancelled", "interrupted"):
                 title, help_text = error_help("TURN_INTERRUPTED" if item["status"] == "interrupted" else meta.get("error", "TURN_PREEMPTED"))
-                label(card, title, bold=True, fg=ERROR if item["status"] == "failed" else MUTED, bg=card.bg).pack(anchor="w", pady=(10, 4))
-                label(card, help_text, size=9, fg=MUTED, bg=card.bg, wraplength=620, justify="left").pack(anchor="w")
+                label(card.content, title, bold=True, fg=ERROR if item["status"] == "failed" else MUTED, bg=card.bg).pack(anchor="w", pady=(10, 4))
+                label(card.content, help_text, size=9, fg=MUTED, bg=card.bg, wraplength=620, justify="left").pack(anchor="w")
                 if index == len(self.message_rows) - 1:
                     button(card.footer, "もう一度", lambda row=item: self.retry(row)).pack(side="left", padx=(8, 0))
                     button(card.footer, "質問を編集", lambda row=item: self.edit_question(row)).pack(side="left", padx=8)
             for number, source in enumerate(citations, 1):
-                source_button = button(card, f"［{number}］ " + source["title"][:60] + "  ↗", lambda did=source["id"]: self.open_document(did))
+                source_button = button(card.content, f"［{number}］ " + source["title"][:60], lambda did=source["id"]: self.open_document(did))
                 source_button.configure(wraplength=540); source_button.pack(anchor="w", pady=(7, 0))
-                label(card, "取得 " + short_time(source["observed_at"]), size=8, fg=MUTED, bg=card.bg).pack(anchor="w")
+                label(card.content, "取得 " + short_time(source["observed_at"]), size=8, fg=MUTED, bg=card.bg).pack(anchor="w")
             if meta.get("trace"):
                 steps = "\n".join(TOOL_LABELS.get(s["tool"], "情報の確認").replace("しています", "") + ("  ✓" if s["status"] == "ok" else "  確認できませんでした") for s in meta["trace"])
-                details = label(card, steps, size=8, fg=MUTED, bg=card.bg, justify="left", wraplength=620)
+                details = label(card.content, steps, size=8, fg=MUTED, bg=card.bg, justify="left", wraplength=620)
                 button(card.footer, f"確認の手順 ({len(meta['trace'])})", lambda w=details: w.pack_forget() if w.winfo_manager() else w.pack(anchor="w", pady=8)).pack(side="left", padx=8)
         if self.current_session in self.transient_errors and (not self.message_rows or self.message_rows[-1]["status"] == "completed"):
             title, help_text = error_help(self.transient_errors[self.current_session])
@@ -427,16 +441,16 @@ class Desktop:
             button(welcome, "初期設定を開く", lambda: self.show_page("settings"), primary=True).pack(anchor="w")
             return
         has_documents = bool(self.rt.store.stats().get("documents", 0))
-        label(welcome, "AIに質問する", size=24, bold=True, bg=BG).pack(anchor="w")
+        label(welcome, "AIに質問する", size=22, bold=True, bg=BG).pack(anchor="w")
         label(welcome, "質問を入力して送信してください。資料を使う場合は「資料を追加」で取り込めます。", fg=MUTED, bg=BG, wraplength=600, justify="left").pack(anchor="w", pady=(12, 18))
-        button(welcome, "資料を追加", self.import_documents, primary=not has_documents).pack(anchor="w", pady=(0, 12))
+        actions = tk.Frame(welcome, bg=BG); actions.pack(fill="x", pady=(0, 12))
+        button(actions, "資料を追加", self.import_documents, primary=not has_documents).pack(side="left", padx=(0, 8))
         prompts = [("会議の準備", "取得済み資料から、次の会議で確認する事項を整理して。"),
                    ("資料の要約", "添えた資料の要点と不明な点を出典付きで整理して。")]
         if not has_documents:
             prompts = [("文章の整理", "次の文章を箇条書きに整理して。\n\n")]
         for title, prompt in prompts:
-            tile = button(welcome, title + "   →", lambda p=prompt: self.fill_prompt(p), anchor="w")
-            tile.configure(highlightbackground=LINE, pady=10); tile.pack(fill="x", pady=(0, 8))
+            button(actions, title, lambda p=prompt: self.fill_prompt(p)).pack(side="left", padx=(0, 8))
         label(welcome, "取得済みの資料やブラウザから渡した文章は「資料を添える」で選べます。", size=9, fg=MUTED, bg=BG, wraplength=600).pack(anchor="w", pady=(10, 0))
 
     def fill_prompt(self, prompt):
@@ -466,9 +480,9 @@ class Desktop:
         for index, did in enumerate(self.attached):
             try: title = self.rt.store.get_document(did)["title"]
             except AssistantError: title = "利用できない資料"
-            chip = tk.Frame(self.attachment_strip, bg=SOFT, padx=6, pady=2); chip.grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 6), pady=2)
-            label(chip, title[:12] + ("…" if len(title) > 12 else ""), size=8, fg=TEAL, bg=SOFT).pack(side="left")
-            remove = button(chip, "×", lambda d=did: self.remove_attachment(d)); remove.configure(padx=4, pady=2); remove.pack(side="left")
+            chip = RoundedPanel(self.attachment_strip, fill=SOFT, radius=12, padding=(8, 4)); chip.grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 6), pady=2)
+            label(chip.content, title[:12] + ("…" if len(title) > 12 else ""), size=8, fg=TEAL, bg=SOFT).pack(side="left")
+            remove = button(chip.content, "外す", lambda d=did: self.remove_attachment(d)); remove.configure(padx=4, pady=2); remove.pack(side="left")
 
     def remove_attachment(self, did):
         self.attached = [d for d in self.attached if d != did]; self.render_attachments(); self.save_draft()
@@ -507,7 +521,7 @@ class Desktop:
         label(dialog, "資料名・本文を検索", size=9, fg=MUTED, bg=BG).pack(anchor="w", padx=22)
         field = entry(dialog, query); field.pack(fill="x", padx=22, ipady=7, pady=(4, 0))
         empty = label(dialog, "", size=9, fg=MUTED, bg=BG, wraplength=680, justify="left"); empty.pack(fill="x", padx=22, pady=8)
-        tree = ttk.Treeview(dialog, show="tree", selectmode="extended", height=5); tree.pack(fill="both", expand=True, padx=22)
+        tree = treeview(dialog, show="tree", selectmode="extended", height=5); tree.pack(fill="both", expand=True, padx=22)
         def selected(*_): choose_button.configure(state="normal" if tree.selection() else "disabled")
         def populate(*_):
             for item in tree.get_children(): tree.delete(item)
@@ -673,7 +687,7 @@ class Desktop:
                 if token != self.query.get().strip(): continue
                 self.document_rows = {r["id"]: r for r in payload}
                 for item in self.document_list.get_children(): self.document_list.delete(item)
-                for row in payload: self.document_list.insert("", "end", iid=row["id"], text=row["title"], values=(row["kind"], short_time(row["observed_at"])))
+                for row in payload: self.document_list.insert("", "end", iid=row["id"], text=row["title"], values=(DOCUMENT_TYPES.get(row["kind"], "資料"), short_time(row["observed_at"])))
                 empty = "資料はまだありません。「資料を追加」から、許可したフォルダ内のファイルを選んでください。" if not self.rt.store.stats().get("documents", 0) else "一致する資料がありません。検索語を変えるか、「資料を追加」で対象を追加してください。"
                 self.replace(self.search_view, "資料を選ぶと内容を確認できます。" if payload else empty)
                 self.status.set(f"資料 {len(payload)}件")
@@ -708,6 +722,7 @@ class Desktop:
             elif kind == "decided": self.status.set("候補を更新しました"); self.refresh(schedule=False)
             elif kind == "diagnosis":
                 self.diagnostic_report = "オフライン診断\n\n" + "\n".join(f'{x["check"]}: {x["status"]}\n{x.get("evidence", "")}' for x in payload["checks"])
+                self.info_view.pack(fill="both", expand=True, pady=(12, 0))
                 self.replace(self.info_view, self.diagnostic_report); self.status.set("オフライン診断が完了しました")
             elif kind == "worker_error":
                 operation, worker_token = token

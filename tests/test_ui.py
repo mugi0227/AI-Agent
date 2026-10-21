@@ -19,6 +19,16 @@ def message(text="回答"):
     return {"status": "completed", "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}]}
 
 
+def descendants(widget):
+    for child in widget.winfo_children():
+        yield child
+        yield from descendants(child)
+
+
+def action(widget, text):
+    return next(w for w in descendants(widget) if w.winfo_class() == "Button" and w["text"] == text)
+
+
 @unittest.skipUnless(os.environ.get("WORK_ASSISTANT_UI_TESTS") == "1", "Real Tk checks are enabled in the separate UI job")
 class DesktopTests(unittest.TestCase):
     def setUp(self):
@@ -111,9 +121,9 @@ class DesktopTests(unittest.TestCase):
         did = self.rt.store.documents()[0]["id"]
         self.app.choose_documents(); self.settle(.05)
         dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
-        tree = next(w for w in dialog.winfo_children() if isinstance(w, ttk.Treeview))
+        tree = next(w for w in descendants(dialog) if isinstance(w, ttk.Treeview))
         tree.selection_set(did)
-        choose = next(w for frame in dialog.winfo_children() for w in frame.winfo_children() if w.winfo_class() == "Button" and w["text"] == "この資料を添える")
+        choose = action(dialog, "この資料を添える")
         self.app.root.update()
         self.assertTrue(choose.winfo_ismapped())
         tree.event_generate("<<TreeviewSelect>>")
@@ -274,9 +284,8 @@ class DesktopTests(unittest.TestCase):
     def test_saved_memory_can_be_added_and_removed_from_its_dialog(self):
         self.app.work_panel.memories(); self.settle(.05)
         dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
-        tree = next(w for w in dialog.winfo_children() if w.winfo_class() == "Treeview")
-        bar = dialog.winfo_children()[-1]
-        add, remove = bar.winfo_children()
+        tree = next(w for w in descendants(dialog) if w.winfo_class() == "Treeview")
+        add, remove = action(dialog, "記憶を追加"), action(dialog, "選択した記憶を削除")
         with patch("work_assistant.ui_work.simpledialog.askstring", return_value="会議前に測定条件を確認する"):
             add.invoke()
         self.wait(lambda: len(tree.get_children()) == 1)
@@ -287,9 +296,9 @@ class DesktopTests(unittest.TestCase):
         rid = self.rt.work.add_routine("定期確認", "資料を確認", interval_seconds=3600)
         self.app.work_panel.routines(); self.settle(.05)
         dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
-        tree = next(w for w in dialog.winfo_children() if w.winfo_class() == "Treeview")
+        tree = next(w for w in descendants(dialog) if w.winfo_class() == "Treeview")
         tree.selection_set(rid)
-        dialog.winfo_children()[-1].winfo_children()[1].invoke()
+        action(dialog, "選択した定期実行の有効・無効を変更").invoke()
         self.assertTrue(self.rt.work.routines()[0]["enabled"])
 
     def restart_unconfigured(self):
@@ -434,10 +443,10 @@ class DesktopTests(unittest.TestCase):
         dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
         dialog.geometry("640x400"); self.settle(.05)
         actions = next(w for w in dialog.winfo_children() if w.winfo_class() == "Frame")
-        for widget in actions.winfo_children():
+        for widget in (w for w in descendants(actions) if w.winfo_class() == "Button"):
             self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), dialog.winfo_rooty() + dialog.winfo_height())
-        choose = next(w for w in actions.winfo_children() if w["text"] == "この資料を添える")
+        choose = action(dialog, "この資料を添える")
         self.assertEqual(str(choose["state"]), "disabled")
         self.assertTrue(any("資料はまだありません" in str(w.cget("text")) for w in dialog.winfo_children() if "text" in w.keys()))
 
@@ -474,6 +483,45 @@ class DesktopTests(unittest.TestCase):
             self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
+        self.app.show_page("chat"); self.settle(.1)
+        self.assert_composer_fits()
+
+    def assert_composer_fits(self):
+        for widget in (self.app.attach_button, self.app.stop_button, self.app.send, self.app.register_work):
+            surface = widget.surface
+            self.assertTrue(widget.winfo_ismapped(), widget["text"])
+            self.assertLessEqual(surface.winfo_rootx() + surface.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width(), widget["text"])
+            self.assertLessEqual(surface.winfo_rooty() + surface.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height(), widget["text"])
+
+    def test_composer_actions_remain_visible_in_small_window(self):
+        self.app.root.geometry("960x700"); self.app.show_page("chat"); self.settle(.1)
+        self.assert_composer_fits()
+
+    def test_rounded_controls_preserve_native_roles_keyboard_focus_and_edge_click(self):
+        import tkinter as tk
+        from work_assistant.ui_widgets import button, entry, BG
+        dialog = tk.Toplevel(self.app.root); dialog.configure(bg=BG); dialog.geometry("400x240")
+        calls = []
+        control = button(dialog, "操作を実行", lambda: calls.append("clicked"), primary=True)
+        control.pack(fill="x", padx=20, pady=20)
+        field = entry(dialog); field.pack(fill="x", padx=20)
+        self.settle(.1); dialog.focus_force(); control.focus_set(); self.wait(lambda: self.app.root.focus_get() == control)
+        self.assertEqual(control.winfo_class(), "Button")
+        self.assertEqual(field.winfo_class(), "Entry")
+        control.event_generate("<Return>"); self.settle(.05)
+        self.assertEqual(calls, ["clicked"])
+        control.event_generate("<Tab>"); self.wait(lambda: self.app.root.focus_get() == field)
+        self.assertIs(self.app.root.focus_get(), field)
+        field.insert(0, "日本語の入力"); self.assertEqual(field.get(), "日本語の入力")
+        control.configure(state="disabled"); control.invoke(); self.assertEqual(len(calls), 1)
+        control.configure(state="normal")
+        edge = control.surface.backdrop
+        edge.event_generate("<ButtonPress-1>", x=2, y=edge.winfo_height() // 2)
+        edge.event_generate("<ButtonRelease-1>", x=2, y=edge.winfo_height() // 2)
+        self.settle(.05); self.assertEqual(len(calls), 2)
+        self.assertIs(self.app.root.focus_get(), control)
+        control.destroy(); field.destroy(); self.settle(.05)
+        self.assertFalse(control.surface.winfo_exists()); self.assertFalse(field.surface.winfo_exists())
 
 
 if __name__ == "__main__": unittest.main()
