@@ -113,7 +113,11 @@ class DesktopTests(unittest.TestCase):
         dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
         tree = next(w for w in dialog.winfo_children() if isinstance(w, ttk.Treeview))
         tree.selection_set(did)
-        choose = next(w for w in dialog.winfo_children() if w.winfo_class() == "Button")
+        choose = next(w for frame in dialog.winfo_children() for w in frame.winfo_children() if w.winfo_class() == "Button" and w["text"] == "この資料を添える")
+        self.app.root.update()
+        self.assertTrue(choose.winfo_ismapped())
+        tree.event_generate("<<TreeviewSelect>>")
+        self.settle(.05)
         choose.invoke(); self.settle(.05)
         self.assertEqual(self.app.attached, [did]); self.assertEqual(self.app.current_page, "chat")
 
@@ -287,6 +291,189 @@ class DesktopTests(unittest.TestCase):
         tree.selection_set(rid)
         dialog.winfo_children()[-1].winfo_children()[1].invoke()
         self.assertTrue(self.rt.work.routines()[0]["enabled"])
+
+    def restart_unconfigured(self):
+        from work_assistant.ui import Desktop
+        self.app.close()
+        self.rt = Runtime(self.home)
+        self.app = Desktop(self.rt, start_runtime=False)
+        self.app.root.report_callback_exception = lambda kind, error, trace: self.callback_errors.append(str(error))
+        self.wait(lambda: not self.app.loading)
+        return self.app.settings_panel
+
+    def permit_connection(self, panel):
+        for field in ("local_data_approved", "enabled", "data_transfer_approved", "cross_region_approved"):
+            panel.vars[field].set(True)
+
+    def test_first_run_opens_settings_and_actions_fit_minimum_window(self):
+        panel = self.restart_unconfigured()
+        self.assertEqual(self.app.current_page, "settings")
+        self.app.root.geometry("960x700"); self.settle()
+        self.assertIn("1 保存と資料", [panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()])
+        for widget in (panel.save_button, panel.test_button, panel.chat_button):
+            self.assertTrue(widget.winfo_ismapped())
+            self.assertGreaterEqual(widget.winfo_rootx(), self.app.root.winfo_rootx())
+            self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
+            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
+        self.assertEqual(str(panel.chat_button["state"]), "disabled")
+        for widget in self.app.nav_buttons.values():
+            self.assertTrue(widget.winfo_ismapped())
+            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
+
+    def test_gui_setup_import_question_and_citation_without_json_edit_or_restart(self):
+        from test_setup import EchoProbeClient
+        from work_assistant.config import load
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        root = self.home.parent / (self.home.name + "-documents"); root.mkdir()
+        document = root / "meeting.txt"; document.write_text("会議では測定条件を確認する。", encoding="utf-8")
+        try:
+            with patch("work_assistant.ui_settings.filedialog.askdirectory", return_value=str(root)):
+                panel.add_root()
+            client = EchoProbeClient()
+            with patch("work_assistant.setup_flow.BedrockClient", return_value=client):
+                panel.test_button.invoke()
+                self.wait(lambda: not panel.busy and "成功" in panel.status.get())
+            self.assertEqual(len(client.calls), 2)
+            self.assertTrue(self.app.ready()); self.assertTrue(load(self.home).local_data_approved)
+            self.assertEqual(str(panel.chat_button["state"]), "normal")
+            panel.chat_button.invoke(); self.assertEqual(self.app.current_page, "chat")
+            with patch("work_assistant.ui.filedialog.askopenfilenames", return_value=[str(document)]):
+                self.app.import_documents()
+                self.wait(lambda: bool(self.app.attached))
+            did = self.app.attached[0]
+            self.rt.agent.client = ScriptedClient([message("確認事項は測定条件です。 [資料:" + did + "]")])
+            self.app._set_input("会議の確認事項を整理して")
+            self.wait(lambda: str(self.app.send["state"]) == "normal")
+            self.app.send.invoke()
+            self.wait(lambda: not self.app.loading and len(self.app.message_rows) == 2)
+            self.assertEqual(self.app.message_rows[-1]["metadata"]["citations"][0]["id"], did)
+            self.app.open_document(did)
+            self.wait(lambda: any(w.winfo_class() == "Toplevel" for w in self.app.root.winfo_children()))
+        finally:
+            document.unlink(missing_ok=True); root.rmdir()
+
+    def test_save_only_never_tests_connection_and_preserves_advanced_settings(self):
+        from work_assistant.config import load
+        panel = self.restart_unconfigured()
+        self.rt.cfg.retention_days = 47; panel.base.retention_days = 47
+        panel.vars["local_data_approved"].set(True)
+        with patch("work_assistant.ui_settings.probe_connection") as probe:
+            panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        probe.assert_not_called()
+        self.assertTrue(load(self.home).local_data_approved)
+        self.assertEqual(load(self.home).retention_days, 47)
+        self.assertFalse(self.app.ready())
+        self.assertIn("AI接続", panel.status.get())
+
+    def test_invalid_setting_and_save_failure_keep_input_and_old_config(self):
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        before = (self.home / "config.json").read_bytes()
+        panel.vars["endpoint"].set("https://example.com/openai/v1")
+        panel.save_button.invoke(); self.settle(.05)
+        self.assertIn("接続先", panel.status.get()); self.assertFalse(panel.busy)
+        self.assertEqual(panel.vars["endpoint"].get(), "https://example.com/openai/v1")
+        panel.vars["endpoint"].set("https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1")
+        with patch("work_assistant.runtime.atomic_json", side_effect=OSError("write failed")):
+            panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual((self.home / "config.json").read_bytes(), before)
+        self.assertFalse(self.rt.cfg.local_data_approved)
+        self.assertTrue(panel.vars["local_data_approved"].get())
+        self.assertTrue(panel.dirty); self.assertIn("書き込み権限", panel.status.get())
+
+    def test_missing_approval_does_not_call_connection_test(self):
+        panel = self.restart_unconfigured()
+        with patch("work_assistant.ui_settings.probe_connection") as probe:
+            panel.test_button.invoke(); self.settle(.05)
+        probe.assert_not_called(); self.assertFalse(panel.busy)
+        self.assertIn("許可", panel.status.get())
+        self.assertEqual(str(panel.tabs.index(panel.tabs.select())), "0")
+
+    def test_connection_failure_retries_and_changed_model_invalidates_success(self):
+        from work_assistant.common import AssistantError
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        with patch("work_assistant.ui_settings.probe_connection", side_effect=[AssistantError("BEDROCK_ACCESS_DENIED"), {}]):
+            panel.test_button.invoke(); self.wait(lambda: not panel.busy)
+            self.assertIn("AWSプロファイル", panel.status.get())
+            self.assertIn("失敗", panel.probe_label["text"])
+            self.assertEqual(panel.vars["model"].get(), "global.openai.gpt-6-luna")
+            panel.test_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertIn("成功", panel.probe_label["text"])
+        panel.vars["model"].set("global.openai.other")
+        self.assertEqual(str(panel.chat_button["state"]), "disabled")
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertIn("未確認", panel.probe_label["text"])
+
+    def test_busy_runtime_keeps_unsaved_inputs_for_retry(self):
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        with self.rt.operation():
+            panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertFalse(self.rt.cfg.local_data_approved)
+        self.assertTrue(panel.dirty)
+        self.assertIn("処理が終わって", panel.status.get())
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertTrue(self.rt.cfg.local_data_approved)
+
+    def test_long_connection_test_keeps_ui_responsive_and_blocks_duplicate_submission(self):
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        started, release = threading.Event(), threading.Event()
+        def probe(*_): started.set(); release.wait(5); return {}
+        with patch("work_assistant.ui_settings.probe_connection", side_effect=probe) as mock:
+            try:
+                panel.test_button.invoke(); self.wait(started.is_set)
+                self.assertEqual(str(panel.save_button["state"]), "disabled")
+                self.assertEqual(str(panel.fields["model"]["state"]), "disabled")
+                panel.submit(True)
+                self.app.show_page("documents"); self.settle(.05)
+                self.assertEqual(self.app.current_page, "documents")
+            finally: release.set()
+            self.wait(lambda: not panel.busy)
+        self.assertEqual(mock.call_count, 1)
+
+    def test_empty_attachment_dialog_explains_import_and_keeps_buttons_visible(self):
+        self.app.choose_documents(); self.settle(.05)
+        dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
+        dialog.geometry("640x400"); self.settle(.05)
+        actions = next(w for w in dialog.winfo_children() if w.winfo_class() == "Frame")
+        for widget in actions.winfo_children():
+            self.assertTrue(widget.winfo_ismapped())
+            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), dialog.winfo_rooty() + dialog.winfo_height())
+        choose = next(w for w in actions.winfo_children() if w["text"] == "この資料を添える")
+        self.assertEqual(str(choose["state"]), "disabled")
+        self.assertTrue(any("資料はまだありません" in str(w.cget("text")) for w in dialog.winfo_children() if "text" in w.keys()))
+
+    def test_import_without_folder_routes_to_setup_and_disallowed_file_is_not_imported(self):
+        self.app.import_documents()
+        self.assertEqual(self.app.current_page, "settings")
+        self.assertIn("資料フォルダ", self.app.settings_panel.status.get())
+        allowed = self.home / "allowed"; allowed.mkdir()
+        outside = self.home / "outside.txt"; outside.write_text("outside-scope", encoding="utf-8")
+        self.rt.cfg.roots = [str(allowed)]
+        with patch("work_assistant.ui.filedialog.askopenfilenames", return_value=[str(outside)]), patch("work_assistant.ui.messagebox.showwarning") as warning:
+            self.app.import_documents(); self.wait(lambda: warning.called)
+        self.assertEqual(self.rt.store.documents(), [])
+        self.assertEqual(self.app.attached, [])
+        self.assertIn("フォルダを追加", warning.call_args.args[1])
+
+    def test_region_change_updates_standard_endpoint(self):
+        panel = self.app.settings_panel
+        panel.vars["region"].set("us-east-1")
+        self.assertEqual(panel.vars["endpoint"].get(), "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1")
+
+    def test_settings_and_navigation_remain_usable_with_larger_tk_scaling(self):
+        import tkinter as tk
+        from work_assistant.ui import Desktop
+        original_tk = tk.Tk
+        self.app.close()
+        def scaled_root():
+            root = original_tk(); root.tk.call("tk", "scaling", 2.0); return root
+        with patch("work_assistant.ui.tk.Tk", side_effect=scaled_root):
+            self.app = Desktop(self.rt, start_runtime=False)
+        self.app.root.report_callback_exception = lambda kind, error, trace: self.callback_errors.append(str(error))
+        self.app.root.geometry("960x700"); self.app.show_page("settings"); self.settle()
+        for widget in [*self.app.nav_buttons.values(), self.app.settings_panel.save_button, self.app.settings_panel.test_button]:
+            self.assertTrue(widget.winfo_ismapped())
+            self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
+            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
 
 
 if __name__ == "__main__": unittest.main()

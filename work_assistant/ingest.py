@@ -86,7 +86,7 @@ class Ingestor:
                "content_hash": digest(canonical([raw["title"], content, metadata])), "metadata": metadata}
         return self.store.put_document(doc, raw["event_id"], payload_hash)
 
-    def file(self, path: Path) -> str:
+    def file(self, path: Path, *, return_id: bool = False) -> str:
         path = require_file(path, self.cfg, self.home)
         before = path.stat()
         with path.open("rb") as handle:
@@ -112,7 +112,11 @@ class Ingestor:
                "modified_at": stamp(datetime.fromtimestamp(after.st_mtime, tz=now.tzinfo)),
                "observed_at": stamp(now), "expires_at": stamp(now + timedelta(days=self.cfg.retention_days)),
                "content_hash": digest(canonical([path.name, text, metadata])), "metadata": metadata}
-        return self.store.put_document(doc, str(uuid.uuid4()), digest(canonical(doc)))
+        result = self.store.put_document(doc, str(uuid.uuid4()), digest(canonical(doc)))
+        if return_id:
+            self.validate_live_source(doc["id"])
+            return doc["id"]
+        return result
 
     def validate_live_source(self, document_id: str) -> dict:
         doc = self.store.get_document(document_id)

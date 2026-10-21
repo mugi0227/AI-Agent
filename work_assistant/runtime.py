@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import threading
 import time
+import copy
+from contextlib import contextmanager
+from dataclasses import asdict, fields
 from pathlib import Path
 
 from .agent import Agent
 from .bedrock import BedrockClient
 from .bridge import Bridge
-from .common import AssistantError, safe_code
+from .common import AssistantError, safe_code, atomic_json
 from .config import Settings, load
 from .ingest import Ingestor
 from .scheduler import Scheduler
@@ -32,10 +35,52 @@ class Runtime:
         self.active_cancel: threading.Event | None = None
         self.foreground_lease = None
         self.wake = threading.Event()
+        self._settings_lock = threading.RLock()
+        self._active_operations = 0
+        self._settings_changing = False
         self.threads: list[threading.Thread] = []
         self.status = "起動済み（承認・設定が未完了なら外部通信しません）"
 
+    @contextmanager
+    def operation(self):
+        """Concurrent work is allowed; settings commit requires a quiescent runtime."""
+        with self._settings_lock:
+            if self._settings_changing:
+                raise AssistantError("SETTINGS_BUSY")
+            self._active_operations += 1
+        try:
+            yield
+        finally:
+            with self._settings_lock:
+                self._active_operations -= 1
+
+    def configure(self, settings: Settings) -> None:
+        from .setup_flow import validate_setup
+        candidate = copy.deepcopy(settings)
+        with self._settings_lock:
+            if self._active_operations or self._settings_changing or self.stop_event.is_set():
+                raise AssistantError("SETTINGS_BUSY")
+            self._settings_changing = True
+        try:
+            validate_setup(candidate, self.home)
+            atomic_json(self.home / "config.json", asdict(candidate))
+            # Keep object identities: all runtime components share these references.
+            # No active operation can observe a partially applied configuration.
+            for item in fields(candidate.bedrock):
+                setattr(self.cfg.bedrock, item.name, copy.deepcopy(getattr(candidate.bedrock, item.name)))
+            for item in fields(candidate):
+                if item.name != "bedrock":
+                    setattr(self.cfg, item.name, copy.deepcopy(getattr(candidate, item.name)))
+            self.wake.set()
+        finally:
+            with self._settings_lock:
+                self._settings_changing = False
+
     def scan(self) -> dict:
+        with self.operation():
+            return self._scan()
+
+    def _scan(self) -> dict:
         self.store.expire()
         self.store.recover_interrupted()
         self.work.prune(self.cfg.retention_days)
@@ -66,8 +111,9 @@ class Runtime:
                     self.scan()
                     next_scan = time.monotonic() + self.cfg.scan_interval_seconds
                 else:
-                    self.ingestor.scan_drops(self.bridge.receive)
-                    self.wake.set()
+                    with self.operation():
+                        self.ingestor.scan_drops(self.bridge.receive)
+                        self.wake.set()
             except Exception as error:
                 self.status = "収集エラー: " + safe_code(error)
             self.stop_event.wait(1)
@@ -81,7 +127,8 @@ class Runtime:
                     self.background_cancel.set()
                 else:
                     try:
-                        self.scheduler.tick(cancel=self.background_cancel)
+                        with self.operation():
+                            self.scheduler.tick(cancel=self.background_cancel)
                     except Exception as error:
                         self.status = "定期確認エラー: " + safe_code(error)
             self.stop_event.wait(5)
@@ -90,12 +137,13 @@ class Runtime:
         while not self.stop_event.is_set():
             if not self.foreground.is_set() and (self.cfg.durable_work_enabled or self.cfg.heartbeat_enabled):
                 try:
-                    if self.cfg.durable_work_enabled: self.work.schedule()
-                    self.background_cancel.clear()
-                    if not self.foreground.is_set():
-                        outcome = self.work_runner.run_one(cancel=CombinedCancel(self.stop_event, self.background_cancel),
-                            allowed_kinds=None if self.cfg.durable_work_enabled else {"monitor"})
-                        if outcome["status"] not in ("idle", "skipped", "disabled"): continue
+                    with self.operation():
+                        if self.cfg.durable_work_enabled: self.work.schedule()
+                        self.background_cancel.clear()
+                        if not self.foreground.is_set():
+                            outcome = self.work_runner.run_one(cancel=CombinedCancel(self.stop_event, self.background_cancel),
+                                allowed_kinds=None if self.cfg.durable_work_enabled else {"monitor"})
+                            if outcome["status"] not in ("idle", "skipped", "disabled"): continue
                 except Exception as error: self.status = "継続タスクの処理エラー: " + safe_code(error)
             self.wake.wait(1); self.wake.clear()
 
@@ -109,7 +157,8 @@ class Runtime:
             lease = ForegroundLease(self.work, "main", kwargs.get("session", "main"), self.cfg.background_workers + 1)
             self.foreground_lease = lease
             with lease:
-                return self.agent.turn(text, cancel=self.active_cancel, **kwargs)
+                with self.operation():
+                    return self.agent.turn(text, cancel=self.active_cancel, **kwargs)
         finally:
             self.foreground_lease = None
             self.active_cancel = None

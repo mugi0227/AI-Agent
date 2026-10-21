@@ -7,7 +7,7 @@ import subprocess
 import threading
 import tkinter as tk
 from datetime import datetime
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 from tkinter.scrolledtext import ScrolledText
 
 from .chat import ChatController, error_help, display_answer, copy_answer, TOOL_LABELS
@@ -68,7 +68,7 @@ class Desktop:
         self.root.bind("<Control-l>", lambda _: self.focus_composer())
         self.root.bind("<Escape>", lambda _: self.stop())
         self.session_filter.trace_add("write", lambda *_: self.refresh_sessions())
-        self.show_page("chat"); self.load_session(self.current_session, save=False)
+        self.show_page("chat" if self.ready() else "settings"); self.load_session(self.current_session, save=False)
         if start_runtime: self.rt.start()
         self.refresh(); self.root.after(60, self.pump)
 
@@ -88,7 +88,7 @@ class Desktop:
         self.session_list = tk.Listbox(self.sidebar, bg=NAV, fg="#dfebf3", selectbackground=NAV_HOVER,
                                        selectforeground=WHITE, relief="flat", borderwidth=0, highlightthickness=0,
                                        activestyle="none", exportselection=False, font=(self.root.ui_font, 10),
-                                       selectborderwidth=0, height=7)
+                                       selectborderwidth=0, height=1)
         self.session_list.pack(fill="both", expand=True, padx=12)
         self.session_list.bind("<<ListboxSelect>>", self.select_session)
         tk.Checkbutton(self.sidebar, text="保管した会話を表示", variable=self.show_archived, command=self.refresh_sessions,
@@ -98,7 +98,7 @@ class Desktop:
         self.nav_buttons = {}
         for name in ("documents", "proposals", "tasks", "work", "notifications", "settings"):
             nav = button(self.sidebar, PAGE_TITLES[name], lambda n=name: self.show_page(n), dark=True, anchor="w")
-            nav.configure(bg=NAV, highlightbackground=NAV)
+            nav.configure(bg=NAV, highlightbackground=NAV, pady=5)
             nav.pack(fill="x", padx=12, pady=2); self.nav_buttons[name] = nav
         label(self.sidebar, "履歴はこのPCに保存", size=8, fg=NAV_MUTED, bg=NAV).pack(anchor="w", padx=22, pady=(17, 20))
 
@@ -149,6 +149,7 @@ class Desktop:
         self.register_work = button(bar, "継続タスクに登録", self.register_durable_work); self.register_work.pack(side="left")
         self.send = button(bar, "送信  ↑", self.ask, primary=True); self.send.pack(side="right")
         self.stop_button = button(bar, "■  停止", self.stop); self.stop_button.pack(side="right", padx=7)
+        label(self.composer_shell, "送信: この会話で回答  ·  継続タスクに登録: 依頼を保存して実行状態を管理", size=8, fg=MUTED, bg=BG, wraplength=650).pack(anchor="w", pady=(7, 0))
         label(self.composer_shell, "Enterで改行  ·  Ctrl+Enterで送信  ·  Ctrl+Nで新しい会話  ·  Escで停止", size=8, fg=MUTED, bg=BG).pack(anchor="w", pady=(7, 0))
         self.thread = ScrollFrame(page, on_scroll=self.thread_scrolled); self.thread.pack(fill="both", expand=True)
 
@@ -157,7 +158,8 @@ class Desktop:
         toolbar = tk.Frame(page, bg=BG); toolbar.pack(fill="x", padx=28, pady=22)
         self.query = entry(toolbar); self.query.pack(side="left", fill="x", expand=True, ipady=9)
         self.query.bind("<Return>", lambda _: self.search())
-        button(toolbar, "検索", self.search, primary=True).pack(side="left", padx=8)
+        button(toolbar, "検索", self.search).pack(side="left", padx=8)
+        button(toolbar, "資料を追加", self.import_documents, primary=True).pack(side="left", padx=(0, 8))
         button(toolbar, "再走査", self.scan).pack(side="left")
         label(page, "取得済みの資料を検索し、選んだ資料を会話に添えられます。", fg=MUTED, bg=BG).pack(anchor="w", padx=28)
         self.document_list = ttk.Treeview(page, columns=("kind", "observed"), selectmode="extended", height=9)
@@ -192,25 +194,8 @@ class Desktop:
         self.notification_view = self.text(page)
 
     def _build_settings(self):
-        page = self.pages["settings"]
-        label(page, "設定の確認", size=19, bold=True, bg=BG).pack(anchor="w", padx=28, pady=(25, 6))
-        label(page, "資料の取得範囲・AI接続・通知の設定を確認できます。", fg=MUTED, bg=BG).pack(anchor="w", padx=28, pady=(0, 18))
-        self.settings_cards = []
-        items = [("1  資料とローカル保存", "利用するフォルダ・ブラウザの許可ホストを指定します。"),
-                 ("2  Bedrockへの接続", "AWS認証・モデル・処理地域と、データ送信の設定を確認します。"),
-                 ("3  定期確認と通知", "必要な場合だけ有効にし、勤務時間と通知回数を調整します。")]
-        for title, description in items:
-            card = tk.Frame(page, bg=WHITE, padx=18, pady=15, highlightbackground=LINE, highlightthickness=1)
-            card.pack(fill="x", padx=28, pady=(0, 10))
-            state = label(card, "", size=9, fg=TEAL); state.pack(side="right")
-            label(card, title, size=11, bold=True).pack(anchor="w")
-            label(card, description, size=9, fg=MUTED).pack(anchor="w", pady=(5, 0)); self.settings_cards.append(state)
-        actions = tk.Frame(page, bg=BG); actions.pack(fill="x", padx=28, pady=12)
-        button(actions, "設定ファイルを開く", self.open_config, primary=True).pack(side="left")
-        button(actions, "保存先をコピー", lambda: self.copy(str(self.rt.home / "config.json"))).pack(side="left", padx=8)
-        button(actions, "オフライン診断", self.diagnose).pack(side="left")
-        label(page, "設定を変更したらアプリを再起動してください。", fg=MUTED, bg=BG).pack(anchor="w", padx=28, pady=(0, 10))
-        self.info_view = self.text(page)
+        from .ui_settings import SettingsPanel
+        self.settings_panel = SettingsPanel(self, self.pages["settings"])
 
     def text(self, parent):
         widget = ScrolledText(parent, wrap="word", relief="flat", borderwidth=0,
@@ -233,7 +218,10 @@ class Desktop:
 
     def _work(self, kind, function, token=None):
         def work():
-            try: self.events.put((kind, token, function()))
+            try:
+                with self.rt.operation():
+                    result = function()
+                self.events.put((kind, token, result))
             except Exception as error: self.events.put(("worker_error", (kind, token), safe_code(error)))
         threading.Thread(target=work, daemon=True).start()
 
@@ -340,7 +328,7 @@ class Desktop:
             self._set_input(""); self.attached = []; self.render_attachments(); self.save_draft(); self.update_controls()
 
     def ask(self, *, prompt=None, document_ids=None, retry_message_id=None):
-        if self.loading: return
+        if self.loading or self.settings_panel.busy: return
         text = self.input.get("1.0", "end-1c").strip() if prompt is None else prompt
         ids = list(self.attached if document_ids is None else document_ids)
         if not text or len(text) > 10000 or self.controller.active: return
@@ -365,18 +353,24 @@ class Desktop:
         return "break"
 
     def ready(self):
+        from .security import validate_bedrock
         cfg = self.rt.cfg
-        return cfg.local_data_approved and (not self.rt.agent.client.is_live or (cfg.bedrock.enabled and cfg.bedrock.data_transfer_approved))
+        if not cfg.local_data_approved: return False
+        if not self.rt.agent.client.is_live: return True
+        try: validate_bedrock(cfg.bedrock)
+        except AssistantError: return False
+        return True
 
     def update_controls(self):
         count = len(self.input.get("1.0", "end-1c")); busy = self.controller.active is not None
         self.counter.configure(text=f"{count:,} / 10,000", fg=ERROR if count > 10000 else MUTED)
         if count: self.placeholder.place_forget()
         else: self.placeholder.place(x=2, y=3)
-        self.send.configure(state="normal" if not self.loading and not busy and self.ready() and 0 < count <= 10000 else "disabled")
+        self.send.configure(state="normal" if not self.loading and not busy and not self.settings_panel.busy and self.ready() and 0 < count <= 10000 else "disabled")
         self.stop_button.configure(state="normal" if busy and not self.controller.active.cancel.is_set() else "disabled")
-        self.attach_button.configure(state="disabled" if self.loading else "normal")
-        self.register_work.configure(state="normal" if not self.loading and self.rt.cfg.local_data_approved and 0 < count <= 10000 else "disabled")
+        configuring = self.settings_panel.busy
+        self.attach_button.configure(state="disabled" if self.loading or configuring else "normal")
+        self.register_work.configure(state="normal" if not self.loading and not self.settings_panel.busy and self.rt.cfg.local_data_approved and 0 < count <= 10000 else "disabled")
         self.input.configure(state="disabled" if self.loading else "normal")
         if busy: self.status.set(("" if self.controller.active.session == self.current_session else "別の会話で ") + self.controller.active.progress)
 
@@ -425,16 +419,24 @@ class Desktop:
         if scroll_to_end: self.thread.bottom(force=True)
 
     def render_welcome(self):
-        welcome = tk.Frame(self.thread.inner, bg=BG, padx=36, pady=30); welcome.pack(fill="x")
+        welcome = tk.Frame(self.thread.inner, bg=BG, padx=28, pady=24); welcome.pack(fill="x")
+        if not self.ready():
+            label(welcome, "初期設定が必要です", size=21, bold=True, bg=BG).pack(anchor="w")
+            label(welcome, "「接続・設定」でローカル保存とAI接続を設定すると、質問を送信できます。入力した下書きは保持します。", fg=MUTED, bg=BG, wraplength=600, justify="left").pack(anchor="w", pady=(12, 18))
+            button(welcome, "初期設定を開く", lambda: self.show_page("settings"), primary=True).pack(anchor="w")
+            return
+        has_documents = bool(self.rt.store.stats().get("documents", 0))
         label(welcome, "AIに質問する", size=24, bold=True, bg=BG).pack(anchor="w")
-        label(welcome, "質問を入力し、必要に応じて取得済みの資料を添えてください。", fg=MUTED, bg=BG, wraplength=600, justify="left").pack(anchor="w", pady=(12, 22))
+        label(welcome, "質問を入力して送信してください。資料を使う場合は「資料を追加」で取り込めます。", fg=MUTED, bg=BG, wraplength=600, justify="left").pack(anchor="w", pady=(12, 18))
+        button(welcome, "資料を追加", self.import_documents, primary=not has_documents).pack(anchor="w", pady=(0, 12))
         prompts = [("会議の準備", "取得済み資料から、次の会議で確認する事項を整理して。"),
-                   ("資料の要約", "添えた資料の要点と不明な点を出典付きで整理して。"),
-                   ("タスクの確認", "案件の未完了タスクと、次に確認する事項を一覧にして。")]
+                   ("資料の要約", "添えた資料の要点と不明な点を出典付きで整理して。")]
+        if not has_documents:
+            prompts = [("文章の整理", "次の文章を箇条書きに整理して。\n\n")]
         for title, prompt in prompts:
             tile = button(welcome, title + "   →", lambda p=prompt: self.fill_prompt(p), anchor="w")
-            tile.configure(highlightbackground=LINE, pady=13); tile.pack(fill="x", pady=(0, 8))
-        label(welcome, "ブラウザから渡した文章は「資料を添える」で選べます。", size=9, fg=MUTED, bg=BG).pack(anchor="w", pady=(12, 0))
+            tile.configure(highlightbackground=LINE, pady=10); tile.pack(fill="x", pady=(0, 8))
+        label(welcome, "取得済みの資料やブラウザから渡した文章は「資料を添える」で選べます。", size=9, fg=MUTED, bg=BG, wraplength=600).pack(anchor="w", pady=(10, 0))
 
     def fill_prompt(self, prompt):
         self._set_input(prompt); self.save_draft(); self.update_controls(); self.focus_composer()
@@ -470,13 +472,42 @@ class Desktop:
     def remove_attachment(self, did):
         self.attached = [d for d in self.attached if d != did]; self.render_attachments(); self.save_draft()
 
+    def import_documents(self):
+        if self.settings_panel.busy: return
+        if self.settings_panel.dirty or not self.rt.cfg.local_data_approved or not self.rt.cfg.roots:
+            self.show_page("settings"); self.settings_panel.tabs.select(0)
+            self.settings_panel.show_error("「保存と資料」でローカル保存の許可と資料フォルダを設定し、保存してください。", "roots")
+            return
+        from .security import ALLOWED_SUFFIXES, expanded
+        initial = expanded(self.rt.cfg.roots[0])
+        paths = filedialog.askopenfilenames(parent=self.root, title="許可した資料フォルダ内のファイルを選択",
+            initialdir=str(initial) if initial.is_dir() else str(self.rt.home.parent),
+            filetypes=[("対応する資料", " ".join("*" + suffix for suffix in sorted(ALLOWED_SUFFIXES))), ("すべてのファイル", "*")])
+        if not paths: return
+        if len(paths) > 20:
+            messagebox.showinfo("資料は一度に20件まで", "20件以下に分けて追加してください。", parent=self.root); return
+        from pathlib import Path
+        def ingest():
+            ids, failures = [], []
+            for raw in paths:
+                path = Path(raw)
+                try: ids.append(self.rt.ingestor.file(path, return_id=True))
+                except Exception as error: failures.append((path.name, safe_code(error)))
+            return ids, failures
+        self.status.set("資料を取り込んでいます…"); self._work("import", ingest)
+
     def choose_documents(self):
-        dialog = tk.Toplevel(self.root); dialog.title("取得済みの資料を添える"); dialog.geometry("720x500")
+        dialog = tk.Toplevel(self.root); dialog.title("取得済みの資料を添える"); dialog.geometry("760x520"); dialog.minsize(640, 400)
         dialog.configure(bg=BG); dialog.transient(self.root); dialog.grab_set()
-        label(dialog, "質問に添える資料", size=16, bold=True, bg=BG).pack(anchor="w", padx=22, pady=(20, 5))
-        label(dialog, "最大6件。本文はAIへの依頼時に参照します。", fg=MUTED, bg=BG).pack(anchor="w", padx=22, pady=(0, 12))
-        query = tk.StringVar(); field = entry(dialog, query); field.pack(fill="x", padx=22, ipady=8)
-        tree = ttk.Treeview(dialog, show="tree", selectmode="extended"); tree.pack(fill="both", expand=True, padx=22, pady=12)
+        label(dialog, "質問に添える資料", size=16, bold=True, bg=BG).pack(anchor="w", padx=22, pady=(18, 5))
+        label(dialog, "最大6件。選んだ資料は質問の送信時にAIが参照します。", fg=MUTED, bg=BG, wraplength=680).pack(anchor="w", padx=22, pady=(0, 10))
+        actions = tk.Frame(dialog, bg=BG); actions.pack(side="bottom", fill="x", padx=22, pady=(8, 16))
+        query = tk.StringVar()
+        label(dialog, "資料名・本文を検索", size=9, fg=MUTED, bg=BG).pack(anchor="w", padx=22)
+        field = entry(dialog, query); field.pack(fill="x", padx=22, ipady=7, pady=(4, 0))
+        empty = label(dialog, "", size=9, fg=MUTED, bg=BG, wraplength=680, justify="left"); empty.pack(fill="x", padx=22, pady=8)
+        tree = ttk.Treeview(dialog, show="tree", selectmode="extended", height=5); tree.pack(fill="both", expand=True, padx=22)
+        def selected(*_): choose_button.configure(state="normal" if tree.selection() else "disabled")
         def populate(*_):
             for item in tree.get_children(): tree.delete(item)
             rows = self.rt.store.search(query.get(), 20) if query.get().strip() else self.rt.store.documents(100)
@@ -485,13 +516,20 @@ class Desktop:
                 if row["id"] not in seen:
                     tree.insert("", "end", iid=row["id"], text=row["title"] + "  ·  " + short_time(row["observed_at"]))
                     seen.add(row["id"])
+            empty.configure(text="" if rows else "一致する資料がありません。検索語を変えてください。" if query.get().strip() else "資料はまだありません。「資料を追加」からファイルを取り込んでください。")
+            selected()
         def choose():
+            if not tree.selection(): return
             ids = list(dict.fromkeys(self.attached + list(tree.selection())))
             if len(ids) > 6:
                 messagebox.showinfo("資料は6件まで", "資料を減らして選んでください。", parent=dialog); return
             self.attached = ids; self.render_attachments(); self.save_draft(); dialog.destroy(); self.input.focus_set()
-        query.trace_add("write", populate); field.bind("<Return>", lambda _: populate()); populate()
-        button(dialog, "この資料を添える", choose, primary=True).pack(anchor="e", padx=22, pady=(0, 18)); field.focus_set()
+        def add(): dialog.destroy(); self.import_documents()
+        choose_button = button(actions, "この資料を添える", choose, primary=True); choose_button.pack(side="right")
+        button(actions, "取消", dialog.destroy).pack(side="right", padx=8)
+        button(actions, "資料を追加", add).pack(side="left")
+        tree.bind("<<TreeviewSelect>>", selected)
+        query.trace_add("write", populate); field.bind("<Return>", lambda _: populate()); populate(); field.focus_set()
 
     def search(self):
         query = self.query.get().strip(); self.status.set("資料を検索しています…")
@@ -589,15 +627,8 @@ class Desktop:
         self.nav_buttons["proposals"].configure(text=f"承認待ち  {len(self.proposal_rows)}" if self.proposal_rows else "承認待ち")
         self.replace(self.notification_view, "\n\n".join(f'{"未読" if not n["read_at"] else "既読"}  ·  {short_time(n["created_at"])}\n{n["title"]}\n{n["text"]}' for n in notifications) or "通知はまだありません。重要な変化があれば、ここに表示します。")
         cfg = self.rt.cfg; live = self.rt.agent.client.is_live
-        self.connection_badge.configure(text=("Bedrock · " + cfg.bedrock.model.removeprefix("global.openai.")) if live and self.ready() else "接続設定が必要" if live else "オフライン試験")
-        self.settings_cards[0].configure(text="設定済み" if cfg.local_data_approved else "未設定")
-        self.settings_cards[1].configure(text="設定済み・接続は診断で確認" if cfg.bedrock.enabled and cfg.bedrock.data_transfer_approved else "未設定")
-        self.settings_cards[2].configure(text="有効" if cfg.heartbeat_enabled else "無効")
-        counts = self.rt.store.stats()
-        if self.diagnostic_report is None:
-            retrieval = "全文検索・意味検索（ローカルモデル）" if self.rt.agent.memory.embedder else "全文検索（意味検索モデルは未使用）"
-            if self.rt.agent.memory.embedding_error: retrieval += "。意味検索モデルの設定を確認してください"
-            self.replace(self.info_view, "保存先\n" + str(self.rt.home) + "\n\n" + self.rt.status + "\n\n取得済み資料: " + str(counts.get("documents", 0)) + "件\n記憶検索: " + retrieval + "\n継続タスクの自動実行: " + ("有効" if cfg.durable_work_enabled else "無効") + "\n\n設定変更後はアプリを再起動してください。診断では、業務データを外部へ送信しません。")
+        self.connection_badge.configure(text="Bedrock · 設定済み" if live and self.ready() else "接続設定が必要" if live else "オフライン試験")
+        self.settings_panel.refresh()
         if not self.ready():
             self.notice_label.configure(text="AIへの接続設定が必要です。ローカル検索は先に使えます。" if cfg.local_data_approved else "まず「接続・設定」から、利用する資料とAIの設定を確認してください。")
             if not self.notice.winfo_manager(): self.notice.pack(fill="x", padx=28, pady=(0, 8), before=self.thread)
@@ -609,6 +640,7 @@ class Desktop:
 
     def pump(self):
         if self.closed: return
+        self.settings_panel.pump()
         changed = False
         for event in self.controller.drain():
             if event.kind in ("answer", "error"):
@@ -641,7 +673,8 @@ class Desktop:
                 self.document_rows = {r["id"]: r for r in payload}
                 for item in self.document_list.get_children(): self.document_list.delete(item)
                 for row in payload: self.document_list.insert("", "end", iid=row["id"], text=row["title"], values=(row["kind"], short_time(row["observed_at"])))
-                self.replace(self.search_view, "資料を選ぶと内容を確認できます。" if payload else "取得済みの範囲では見つかりませんでした。検索語を変えるか、新しい資料を取り込んでください。")
+                empty = "資料はまだありません。「資料を追加」から、許可したフォルダ内のファイルを選んでください。" if not self.rt.store.stats().get("documents", 0) else "一致する資料がありません。検索語を変えるか、「資料を追加」で対象を追加してください。"
+                self.replace(self.search_view, "資料を選ぶと内容を確認できます。" if payload else empty)
                 self.status.set(f"資料 {len(payload)}件")
             elif kind == "document":
                 dialog = tk.Toplevel(self.root); dialog.title(payload["title"]); dialog.geometry("820x640"); dialog.configure(bg=BG)
@@ -656,6 +689,20 @@ class Desktop:
             elif kind == "work_run":
                 self.work_panel.refresh(); self.work_panel.select()
                 self.status.set("継続タスク: " + {"completed": "完了", "waiting": "条件待ち", "idle": "実行できるタスクはありません", "disabled": "接続設定が必要です", "failed": "失敗"}.get(payload["status"], payload["status"]))
+            elif kind == "import":
+                ids, failures = payload
+                all_ids = list(dict.fromkeys(self.attached + ids))
+                if ids:
+                    self.attached = all_ids[:6]
+                    self.show_page("chat"); self.render_attachments(); self.save_draft()
+                    if not self.message_rows: self.render_messages()
+                if failures:
+                    details = "\n".join(name + ": " + error_help(code)[1] for name, code in failures)
+                    messagebox.showwarning("取り込めなかった資料", details, parent=self.root)
+                self.status.set(f"資料を{len(ids)}件取り込みました" + (f"。{len(failures)}件は取り込めませんでした" if failures else ""))
+                if len(all_ids) > 6:
+                    messagebox.showinfo("資料を取り込みました", "質問には6件まで添えました。ほかの資料は「資料を添える」で選べます。", parent=self.root)
+                self.document_rows = {}; self.search(); self.refresh(schedule=False)
             elif kind == "scan": self.status.set("資料の確認が完了しました"); self.search(); self.refresh(schedule=False)
             elif kind == "decided": self.status.set("候補を更新しました"); self.refresh(schedule=False)
             elif kind == "diagnosis":

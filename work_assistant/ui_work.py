@@ -68,7 +68,7 @@ class WorkPanel:
                                  values=(STATUS[job["status"]], self.agent_names.get(job["agent_id"],job["agent_id"])))
             if selected in rows: self.tree.selection_set(selected)
         self.enabled.configure(text="継続タスクの自動実行: " + ("有効" if self.rt.cfg.durable_work_enabled else "無効") +
-            "  ·  自動実行の変更は「接続・設定」から設定ファイルを開いて行います")
+            "  ·  自動実行は「接続・設定」の「定期実行（任意）」で変更できます")
         if not rows: self.app.replace(self.detail, "継続タスクは登録されていません。「新規タスク」または会話の入力欄から登録できます。")
 
     def select(self):
