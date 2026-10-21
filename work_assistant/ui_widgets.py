@@ -8,16 +8,24 @@ from tkinter import font, ttk
 
 from .ui_surfaces import RoundedPanel, RoundedButton, RoundedEntry, RoundedLabel, RoundedTreeview
 
-BG = "#f5f8f6"
+BG = "#f4faff"
 WHITE = "#ffffff"
-INK = "#1c342b"
-MUTED = "#536b61"
-LINE = "#dce6df"
-TEAL = "#176b52"
-SOFT = "#e7f3ed"
-NAV = "#edf3ef"
-NAV_HOVER = "#dcece3"
-NAV_MUTED = "#526a5e"
+INK = "#183a50"
+MUTED = "#526e80"
+LINE = "#cfe5f0"
+ACCENT = "#16678f"
+SOFT = "#e6f5fd"
+NAV = "#eaf7fd"
+NAV_HOVER = "#d3edfb"
+NAV_MUTED = "#506f83"
+PRIMARY = "#b9e6fa"
+PRIMARY_INK = "#15465f"
+PRIMARY_BORDER = "#8ac9e5"
+SELECTION = "#c2e6f9"
+SCROLL = "#c3dfee"
+SCROLL_HOVER = "#9bc9e1"
+DISABLED = "#eaf2f7"
+DISABLED_INK = "#657f90"
 ERROR = "#a13e38"
 
 
@@ -53,15 +61,15 @@ def setup_theme(root):
         font.nametofont(name).configure(family=family, size=10)
     style = ttk.Style(root)
     style.theme_use("clam")
-    style.configure("TScrollbar", background="#c8d8cf", troughcolor=BG, borderwidth=0, arrowsize=11)
-    style.configure("TProgressbar", background=TEAL, troughcolor=SOFT, borderwidth=0)
+    style.configure("TScrollbar", background=SCROLL, troughcolor=BG, borderwidth=0, arrowsize=11)
+    style.configure("TProgressbar", background=ACCENT, troughcolor=SOFT, borderwidth=0)
     style.configure("Treeview", font=(family, 10), rowheight=max(36, font.Font(family=family, size=10).metrics("linespace") + 12), background=WHITE, fieldbackground=WHITE, foreground=INK, borderwidth=0, relief="flat", lightcolor=WHITE, darkcolor=WHITE, bordercolor=WHITE)
     style.configure("Treeview.Heading", font=(family, 9, "bold"), background=WHITE, foreground=MUTED, borderwidth=0, relief="flat", padding=(10, 10))
-    style.map("Treeview", background=[("selected", SOFT)], foreground=[("selected", TEAL)])
+    style.map("Treeview", background=[("selected", SOFT)], foreground=[("selected", ACCENT)])
     style.configure("TNotebook", background=BG, borderwidth=0, bordercolor=BG, lightcolor=BG, darkcolor=BG, relief="flat", tabmargins=(0, 0, 0, 10))
     style.configure("TNotebook.Tab", background=NAV, foreground=MUTED, font=(family, 9), padding=(12, 9), borderwidth=0)
-    style.map("TNotebook.Tab", foreground=[("selected", TEAL), ("active", INK)], expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))])
-    root._tab_images = [_tab_image(root, BG), _tab_image(root, SOFT), _tab_image(root, NAV_HOVER), _tab_image(root, SOFT, TEAL)]
+    style.map("TNotebook.Tab", foreground=[("selected", ACCENT), ("active", INK)], expand=[("selected", (0, 0, 0, 0)), ("!selected", (0, 0, 0, 0))])
+    root._tab_images = [_tab_image(root, BG), _tab_image(root, SOFT), _tab_image(root, NAV_HOVER), _tab_image(root, SOFT, ACCENT)]
     normal, selected, hover, focused = root._tab_images
     style.element_create("Rounded.tab", "image", normal, ("selected", "focus", focused), ("selected", selected), ("active", hover), border=10, sticky="nsew")
     style.layout("TNotebook.Tab", [("Rounded.tab", {"sticky": "nsew", "children": [("Notebook.padding", {"side": "top", "sticky": "nsew", "children": [("Notebook.label", {"side": "top", "sticky": ""})]})]})])
@@ -77,21 +85,22 @@ def label(parent, text="", *, size=10, bold=False, fg=INK, bg=WHITE, **kwargs):
 
 
 def button(parent, text, command, *, primary=False, dark=False, **kwargs):
-    fill = TEAL if primary else NAV if dark else WHITE
-    foreground = WHITE if primary else INK
+    fill = PRIMARY if primary else NAV if dark else WHITE
+    foreground = PRIMARY_INK if primary else INK
     return RoundedButton(parent, text, command, fill=fill, foreground=foreground,
-        hover="#125c46" if primary else NAV_HOVER if dark else SOFT,
-        pressed="#0e4e3a" if primary else "#d1e6da", border=None if primary or dark else LINE,
-        focus=WHITE if primary else TEAL, disabled_fill="#eaf0ec", disabled_foreground="#687b70",
+        hover="#a9dff6" if primary else NAV_HOVER if dark else SOFT,
+        pressed="#94d3ef" if primary else "#c5e6f7", border=PRIMARY_BORDER if primary else None if dark else LINE,
+        focus=ACCENT, disabled_fill=DISABLED, disabled_foreground=DISABLED_INK, gloss=WHITE if primary else None,
         font=(parent._root().ui_font, 10), **kwargs)
 
 
 def entry(parent, variable=None, *, dark=False, **kwargs):
     return RoundedEntry(parent, variable, fill=WHITE, foreground=INK, border=LINE,
-                        focus=TEAL, font=(parent._root().ui_font, 10), **kwargs)
+                        focus=ACCENT, disabled_fill=DISABLED, disabled_foreground=DISABLED_INK,
+                        selection=SELECTION, font=(parent._root().ui_font, 10), **kwargs)
 
 
-def badge(parent, text="", *, fill=SOFT, foreground=TEAL, **kwargs):
+def badge(parent, text="", *, fill=SOFT, foreground=ACCENT, **kwargs):
     return RoundedLabel(parent, text, fill=fill, foreground=foreground,
                         font=(parent._root().ui_font, 9), **kwargs)
 
@@ -185,15 +194,15 @@ class MessageCard(RoundedPanel):
         top = tk.Frame(self.content, bg=bg); top.pack(fill="x")
         label(top, "あなた" if role == "user" else "Work Assistant", bold=True, bg=bg).pack(side="left")
         label(top, timestamp, size=8, fg=MUTED, bg=bg).pack(side="left", padx=10)
-        self.state_label = label(top, status, size=8, fg=TEAL, bg=bg); self.state_label.pack(side="right")
+        self.state_label = label(top, status, size=8, fg=ACCENT, bg=bg); self.state_label.pack(side="right")
         self.body = tk.Text(self.content, wrap="word", width=1, height=2, relief="flat", borderwidth=0,
                             font=(self._root().ui_font, 11), bg=bg, fg=INK,
-                            padx=0, pady=0, spacing1=0, spacing3=3, highlightthickness=0, selectbackground="#b8e4dc", cursor="xterm")
+                            padx=0, pady=0, spacing1=0, spacing3=3, highlightthickness=0, selectbackground=SELECTION, cursor="xterm")
         self.body.tag_configure("strong", font=(self._root().ui_font, 11, "bold"))
         self.body.tag_configure("heading", font=(self._root().ui_font, 12, "bold"), spacing1=4, spacing3=4)
         self.body.tag_configure("gap", font=(self._root().ui_font, 4), spacing1=0, spacing3=1)
         self.body.tag_configure("code", font=(self._root().mono_font, 10), background="#e8edf2", lmargin1=10, lmargin2=10)
-        self.body.tag_configure("inline", font=(self._root().mono_font, 10), foreground=TEAL)
+        self.body.tag_configure("inline", font=(self._root().mono_font, 10), foreground=ACCENT)
         self.body.pack(fill="x", pady=(12, 0))
         self._height_job = None
         self.body.bind("<Configure>", self._resize)

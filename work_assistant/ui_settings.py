@@ -13,7 +13,7 @@ from .config import minute_of_day
 from .security import expanded, model_api, validate_bedrock
 from .model_catalog import list_models
 from .setup_flow import SetupError, connection_fingerprint, probe_connection, validate_setup
-from .ui_widgets import BG, WHITE, INK, MUTED, TEAL, LINE, SOFT, ERROR, ScrollFrame, RoundedPanel, button, entry, label
+from .ui_widgets import BG, WHITE, INK, MUTED, ACCENT, LINE, SOFT, ERROR, ScrollFrame, RoundedPanel, button, entry, label
 
 AUTH_NAMES = {"sigv4": "AWSプロファイル・SSO", "api_key": "環境変数のBedrock APIキー"}
 
@@ -83,7 +83,7 @@ class SettingsPanel:
         self.check(0, "local_data_approved", "会社の利用条件を確認し、会話と選択した資料のローカル保存を許可する", self.base.local_data_approved)
         label(parent, "利用する資料フォルダ（資料を使う場合）", bold=True, bg=WHITE).pack(anchor="w")
         label(parent, "選んだフォルダ内の対応ファイルを検索対象にします。", size=9, fg=MUTED, bg=WHITE).pack(anchor="w", pady=(4, 8))
-        self.roots = tk.Listbox(parent, height=3, font=(self.app.root.ui_font, 10), exportselection=False, bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=TEAL, relief="flat", highlightthickness=1, highlightbackground=LINE, highlightcolor=TEAL, borderwidth=0)
+        self.roots = tk.Listbox(parent, height=3, font=(self.app.root.ui_font, 10), exportselection=False, bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=ACCENT, relief="flat", highlightthickness=1, highlightbackground=LINE, highlightcolor=ACCENT, borderwidth=0)
         self.roots.pack(fill="x"); self.inputs.append(self.roots)
         self.fields["roots"], self.field_tabs["roots"] = self.roots, 0
         for root in self.base.roots: self.roots.insert("end", root)
@@ -196,7 +196,7 @@ class SettingsPanel:
         cfg.auth = next((k for k, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
         key = self.catalog_key()
         self.busy = self.catalog_loading = True; self.set_busy()
-        self.catalog_label.configure(text="AWSから対応モデルと利用条件を取得しています…", fg=TEAL)
+        self.catalog_label.configure(text="AWSから対応モデルと利用条件を取得しています…", fg=ACCENT)
         self.status.set("モデル一覧を取得しています。入力内容は保存しません。")
         def work():
             try: self.catalog_events.put((key, list_models(cfg), None))
@@ -325,7 +325,7 @@ class SettingsPanel:
             self.show_error(error.message, error.field); return
         except AssistantError:
             self.show_error("設定の値を確認してください。入力内容は保持しています。"); return
-        self.busy = True; self.status_label.configure(fg=TEAL)
+        self.busy = True; self.status_label.configure(fg=ACCENT)
         self.status.set("設定を保存しています…" if not test else "設定を保存し、テスト用の入力でAI接続を確認しています…")
         self.set_busy()
         def work():
@@ -371,10 +371,10 @@ class SettingsPanel:
             self.show_error(message or (title + "。" + help_text), field)
         elif test:
             self.tabs.select(2); self.status.set("接続テストに成功しました。「質問画面へ」から質問できます。")
-            self.status_label.configure(fg=TEAL)
+            self.status_label.configure(fg=ACCENT)
         else:
             suffix = "「質問画面へ」から質問できます。" if self.app.ready() else "次に「AI接続」で必要な項目を設定してください。"
-            self.status.set("設定を保存して反映しました。" + suffix); self.status_label.configure(fg=TEAL)
+            self.status.set("設定を保存して反映しました。" + suffix); self.status_label.configure(fg=ACCENT)
         self.app.diagnostic_report = None
         self.app.info_view.pack_forget()
         self.app.refresh(schedule=False)

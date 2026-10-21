@@ -13,7 +13,8 @@ from tkinter.scrolledtext import ScrolledText
 from .chat import ChatController, error_help, display_answer, copy_answer, TOOL_LABELS
 from .common import AssistantError, safe_code
 from .runtime import Runtime
-from .ui_widgets import (BG, WHITE, INK, MUTED, LINE, TEAL, SOFT, NAV, NAV_HOVER, NAV_MUTED,
+from .ui_widgets import (BG, WHITE, INK, MUTED, LINE, ACCENT, SOFT, NAV, NAV_HOVER, NAV_MUTED,
+                         PRIMARY, PRIMARY_INK, PRIMARY_BORDER, SELECTION, SCROLL, SCROLL_HOVER,
                          ERROR, MessageCard, ScrollFrame, RoundedPanel, button, entry, label, badge, treeview, setup_theme)
 
 PAGE_TITLES = {"chat": "会話", "documents": "資料・検索", "proposals": "承認待ち",
@@ -91,8 +92,8 @@ class Desktop:
                        bg=NAV, fg=NAV_MUTED, activebackground=NAV, activeforeground=WHITE,
                        selectcolor=WHITE, font=(self.root.ui_font, 9), borderwidth=0, highlightthickness=0).pack(side="bottom", anchor="w", padx=14, pady=8)
         brand = tk.Frame(self.sidebar, bg=NAV); brand.pack(fill="x", padx=16, pady=(18, 16))
-        logo = RoundedPanel(brand, fill=TEAL, radius=10, padding=(9, 5)); logo.pack(side="left", padx=(0, 10))
-        label(logo.content, "W", size=14, bold=True, bg=TEAL, fg=WHITE).pack()
+        logo = RoundedPanel(brand, fill=PRIMARY, border=PRIMARY_BORDER, gloss=WHITE, radius=10, padding=(9, 5)); logo.pack(side="left", padx=(0, 10))
+        label(logo.content, "W", size=14, bold=True, bg=PRIMARY, fg=PRIMARY_INK).pack()
         label(brand, "Work Assistant", size=11, bold=True, bg=NAV, fg=INK).pack(side="left")
         button(self.sidebar, "新しい会話", self.new_session, primary=True).pack(fill="x", padx=16, pady=(0, 12))
         entry(self.sidebar, self.session_filter, dark=True).pack(fill="x", padx=16, ipady=7)
@@ -100,7 +101,7 @@ class Desktop:
         self.session_caption = label(self.sidebar, "最近の会話", size=9, bold=True, bg=NAV, fg=NAV_MUTED)
         self.session_caption.pack(anchor="w", padx=18, pady=(0, 4))
         self.session_list = tk.Listbox(self.sidebar, bg=NAV, fg=INK, selectbackground=NAV_HOVER,
-                                       selectforeground=TEAL, relief="flat", borderwidth=0, highlightthickness=0,
+                                       selectforeground=ACCENT, relief="flat", borderwidth=0, highlightthickness=0,
                                        activestyle="none", exportselection=False, font=(self.root.ui_font, 10),
                                        selectborderwidth=0, height=1)
         self.session_list.pack(fill="both", expand=True, padx=12)
@@ -139,7 +140,7 @@ class Desktop:
         shell = self.composer_surface.content
         self.input = tk.Text(shell, wrap="word", height=3, width=1, relief="flat", borderwidth=0,
                              undo=True, maxundo=80, font=(self.root.ui_font, 11), bg=WHITE, fg=INK,
-                             insertbackground=TEAL, padx=0, pady=3, highlightthickness=0, selectbackground="#d2ece1")
+                             insertbackground=ACCENT, padx=0, pady=3, highlightthickness=0, selectbackground=SELECTION)
         self.input.pack(fill="x")
         self.placeholder = label(self.input, "質問を入力してください。資料の添付もできます。", size=10, fg=MUTED, wraplength=560, justify="left")
         self.placeholder.place(x=2, y=3)
@@ -211,7 +212,7 @@ class Desktop:
             panel.pack(fill="both", expand=True, padx=24, pady=(0, 20)); parent = panel.content
         widget = ScrolledText(parent, wrap="word", relief="flat", borderwidth=0,
                               bg=WHITE, fg=INK, padx=0, pady=0, font=(self.root.ui_font, 10), highlightthickness=0)
-        widget.vbar.configure(bg="#c8d8cf", activebackground="#adC4b6", troughcolor=WHITE,
+        widget.vbar.configure(bg=SCROLL, activebackground=SCROLL_HOVER, troughcolor=WHITE,
                               relief="flat", borderwidth=0, highlightthickness=0, width=11, elementborderwidth=0)
         widget.pack(fill="both", expand=True); widget.configure(state="disabled")
         return widget
@@ -220,7 +221,7 @@ class Desktop:
         panel = RoundedPanel(parent, fill=WHITE, border=LINE, padding=10)
         panel.pack(fill="x", padx=24)
         widget = tk.Listbox(panel.content, height=height, font=(self.root.ui_font, 10), relief="flat", borderwidth=0,
-                            bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=TEAL,
+                            bg=WHITE, fg=INK, selectbackground=SOFT, selectforeground=ACCENT,
                             highlightthickness=0, exportselection=False, activestyle="none")
         widget.pack(fill="x"); return widget
 
@@ -245,7 +246,7 @@ class Desktop:
         for page in self.pages.values(): page.pack_forget()
         self.pages[name].pack(fill="both", expand=True); self.current_page = name
         for key, nav in self.nav_buttons.items():
-            nav.configure(bg=NAV_HOVER if key == name else NAV, fg=TEAL if key == name else INK)
+            nav.configure(bg=NAV_HOVER if key == name else NAV, fg=ACCENT if key == name else INK)
         title = self.rt.store.session(self.current_session)["title"] if name == "chat" else PAGE_TITLES[name]
         self.section_label.configure(text=PAGE_TITLES[name])
         self.heading.configure(text=title[:26] + ("…" if len(title) > 26 else ""))
@@ -462,7 +463,7 @@ class Desktop:
         if self.pending_request != job.request_id:
             self.pending_card = MessageCard(self.thread.inner, text="", status="生成中・未確定")
             self.pending_request = job.request_id
-            self.pending_label = label(self.pending_card.footer, job.progress, size=9, fg=TEAL); self.pending_label.pack(side="left")
+            self.pending_label = label(self.pending_card.footer, job.progress, size=9, fg=ACCENT); self.pending_label.pack(side="left")
             self.thread.bind_wheel(self.pending_card)
         self.pending_card.set_text(job.text or "…"); self.pending_label.configure(text=job.progress)
         self.pending_card.set_status("停止中" if job.cancel.is_set() else "生成中・未確定"); self.thread.bottom()
@@ -481,7 +482,7 @@ class Desktop:
             try: title = self.rt.store.get_document(did)["title"]
             except AssistantError: title = "利用できない資料"
             chip = RoundedPanel(self.attachment_strip, fill=SOFT, radius=12, padding=(8, 4)); chip.grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 6), pady=2)
-            label(chip.content, title[:12] + ("…" if len(title) > 12 else ""), size=8, fg=TEAL, bg=SOFT).pack(side="left")
+            label(chip.content, title[:12] + ("…" if len(title) > 12 else ""), size=8, fg=ACCENT, bg=SOFT).pack(side="left")
             remove = button(chip.content, "外す", lambda d=did: self.remove_attachment(d)); remove.configure(padx=4, pady=2); remove.pack(side="left")
 
     def remove_attachment(self, did):

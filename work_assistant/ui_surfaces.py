@@ -15,12 +15,13 @@ def rounded_shape(canvas, x, y, width, height, radius, color):
 
 
 class RoundedPanel(tk.Frame):
-    def __init__(self, parent, *, fill, border=None, radius=16, padding=16, outer=None, **kwargs):
+    def __init__(self, parent, *, fill, border=None, radius=16, padding=16, outer=None, gloss=None, **kwargs):
         if outer is None:
             try: outer = parent.cget("bg")
             except tk.TclError: outer = parent._root().cget("bg")
         super().__init__(parent, bg=outer, **kwargs)
         self.fill, self.border, self.radius = fill, border, radius
+        self.gloss = gloss
         self.destroying = False
         self.backdrop = tk.Canvas(self, bg=outer, highlightthickness=0, borderwidth=0, takefocus=False)
         self.backdrop.place(x=0, y=0, relwidth=1, relheight=1)
@@ -45,6 +46,16 @@ class RoundedPanel(tk.Frame):
             rounded_shape(self.backdrop, 2, 2, max(0, width - 4), max(0, height - 4), max(0, self.radius - 2), self.fill)
         else:
             rounded_shape(self.backdrop, 0, 0, width, height, self.radius, self.fill)
+        if self.gloss and width > 12 and height > 12:
+            # A fine upper reflection adds a wet sheen without placing a
+            # gradient behind opaque native text or changing control hit areas.
+            inset = 2.5
+            radius = max(1, min(self.radius - inset, (width - 2*inset) / 2, (height - 2*inset) / 2))
+            self.backdrop.create_line(inset + radius, inset, width - inset - radius, inset, fill=self.gloss)
+            self.backdrop.create_arc(inset, inset, inset + 2*radius, inset + 2*radius,
+                start=90, extent=90, style="arc", outline=self.gloss)
+            self.backdrop.create_arc(width - inset - 2*radius, inset, width - inset, inset + 2*radius,
+                start=0, extent=90, style="arc", outline=self.gloss)
 
     def destroy(self):
         self.destroying = True
@@ -73,13 +84,13 @@ class SurfaceControl:
 
 class RoundedButton(SurfaceControl, tk.Button):
     def __init__(self, parent, text, command, *, fill, foreground, hover, pressed, border,
-                 focus, disabled_fill, disabled_foreground, font, **kwargs):
+                 focus, disabled_fill, disabled_foreground, font, gloss=None, **kwargs):
         self.normal_fill, self.normal_fg = fill, foreground
         self.hover_fill, self.pressed_fill, self.normal_border = hover, pressed, border
         self.focus_color = focus
         self.disabled_fill, self.disabled_fg = disabled_fill, disabled_foreground
         self.hovering, self.pressing, self.edge_pressed = False, False, False
-        self.surface = RoundedPanel(parent, fill=fill, border=border, radius=10, padding=(10, 3))
+        self.surface = RoundedPanel(parent, fill=fill, border=border, radius=10, padding=(10, 3), gloss=gloss)
         padx, pady = kwargs.pop("padx", 4), kwargs.pop("pady", 7)
         super().__init__(self.surface.content, text=text, command=command, bg=fill, fg=foreground,
             activebackground=hover, activeforeground=foreground, disabledforeground=disabled_foreground,
@@ -146,13 +157,14 @@ class RoundedButton(SurfaceControl, tk.Button):
 
 
 class RoundedEntry(SurfaceControl, tk.Entry):
-    def __init__(self, parent, variable=None, *, fill, foreground, border, focus, font, **kwargs):
+    def __init__(self, parent, variable=None, *, fill, foreground, border, focus, font,
+                 disabled_fill, disabled_foreground, selection, **kwargs):
         self.surface = RoundedPanel(parent, fill=fill, border=border, radius=10, padding=(12, 5))
         self.normal_border, self.focus_color = border, focus
         super().__init__(self.surface.content, textvariable=variable, bg=fill, fg=foreground,
             insertbackground=focus, highlightthickness=0, relief="flat", borderwidth=0,
-            disabledbackground="#edf2ef", disabledforeground="#687b70",
-            selectbackground="#d2ece5", selectforeground=foreground, font=font, **kwargs)
+            disabledbackground=disabled_fill, disabledforeground=disabled_foreground,
+            selectbackground=selection, selectforeground=foreground, font=font, **kwargs)
         tk.Entry.pack(self, fill="both", expand=True)
         self.bind("<FocusIn>", lambda _: self.surface.appearance(fill, focus), add="+")
         self.bind("<FocusOut>", lambda _: self.surface.appearance(fill, border), add="+")
