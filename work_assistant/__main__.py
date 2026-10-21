@@ -39,6 +39,26 @@ def main(argv=None) -> int:
     ingest = sub.add_parser("import"); ingest.add_argument("path", type=Path); ingest.add_argument("--envelope", action="store_true")
     project = sub.add_parser("project"); project.add_argument("name"); project.add_argument("--goal", default=""); project.add_argument("--keywords", default="")
     proposal = sub.add_parser("proposal"); proposal.add_argument("id"); proposal.add_argument("--approve", action="store_true"); proposal.add_argument("--reject", action="store_true")
+    work = sub.add_parser("work", help="継続タスクと実行結果"); works = work.add_subparsers(dest="action", required=True)
+    add = works.add_parser("add"); add.add_argument("goal"); add.add_argument("--agent", default="main"); add.add_argument("--document", action="append", default=[]); add.add_argument("--key"); add.add_argument("--at"); add.add_argument("--deadline")
+    for name in ("list", "metrics", "run-next"): works.add_parser(name)
+    for name in ("show", "cancel", "retry"):
+        item = works.add_parser(name); item.add_argument("id")
+    feedback = works.add_parser("feedback"); feedback.add_argument("id"); choice = feedback.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--helpful", action="store_true"); choice.add_argument("--unnecessary", action="store_true")
+    feedback.add_argument("--intervened", action="store_true"); feedback.add_argument("--relevant", type=int); feedback.add_argument("--retrieved", type=int)
+    roles = sub.add_parser("role", help="役割と利用できるツール・資料").add_subparsers(dest="action", required=True)
+    roles.add_parser("list")
+    role = roles.add_parser("set"); role.add_argument("id"); role.add_argument("name"); role.add_argument("--instructions", default=""); role.add_argument("--tools", default=""); role.add_argument("--documents"); role.add_argument("--projects")
+    memories = sub.add_parser("memory", help="役割ごとの保存した記憶").add_subparsers(dest="action", required=True)
+    mem = memories.add_parser("add"); mem.add_argument("text"); mem.add_argument("--agent", default="main"); mem.add_argument("--kind", choices=["semantic", "episodic", "procedural"], default="semantic"); mem.add_argument("--document"); mem.add_argument("--importance", type=float, default=.5)
+    mem = memories.add_parser("search"); mem.add_argument("query"); mem.add_argument("--agent", default="main")
+    mem = memories.add_parser("forget"); mem.add_argument("id"); mem.add_argument("--agent", default="main")
+    routines = sub.add_parser("routine", help="保存したスケジュール・イベント起動").add_subparsers(dest="action", required=True)
+    routines.add_parser("list")
+    routine = routines.add_parser("add"); routine.add_argument("name"); routine.add_argument("instructions"); routine.add_argument("--agent", default="main"); routine.add_argument("--every-minutes", type=int, default=0); routine.add_argument("--at"); routine.add_argument("--event", choices=["document", "bridge", "user"]); routine.add_argument("--event-key", default=""); routine.add_argument("--enabled", action="store_true")
+    for name in ("enable", "disable"):
+        item = routines.add_parser(name); item.add_argument("id")
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -93,6 +113,41 @@ def main(argv=None) -> int:
             rt.ingestor.validate_live_source(item["document_id"])
             rt.store.decide_proposal(args.id, args.approve)
             output = {"status": "approved" if args.approve else "rejected"}
+        elif args.command == "work":
+            if args.action == "add":
+                if not rt.cfg.local_data_approved: raise AssistantError("LOCAL_DATA_NOT_APPROVED")
+                for did in args.document: rt.ingestor.validate_live_source(did)
+                output = {"job_id": rt.work.submit(args.goal, agent_id=args.agent, document_ids=args.document, idempotency_key=args.key, run_after=args.at, deadline=args.deadline)}
+            elif args.action == "list": output = rt.work.jobs()
+            elif args.action == "metrics": output = rt.work.metrics()
+            elif args.action == "run-next": output = rt.work_runner.run_one()
+            elif args.action == "show":
+                rt.store.expire(); job = rt.work.job(args.id); artifacts = rt.work.artifacts(args.id)
+                for source in job["result"].get("citations", []) + [s for a in artifacts for s in a["citations"]]: rt.ingestor.validate_live_source(source["id"])
+                output = {k: v for k, v in job.items() if k not in {"token", "checkpoint", "input_hash"}}
+                output["artifacts"] = artifacts
+            elif args.action in ("cancel", "retry"):
+                getattr(rt.work, args.action)(args.id); output = {"status": rt.work.job(args.id)["status"]}
+            else:
+                rt.work.feedback(args.id, helpful=args.helpful, intervened=args.intervened, retrieval_relevant=args.relevant, retrieval_total=args.retrieved)
+                output = {"status": "recorded"}
+        elif args.command == "role":
+            if args.action == "list": output = [{**p, "capability": p["capability"].as_dict()} for p in rt.work.profiles()]
+            else:
+                from .policy import READ_TOOLS
+                split = lambda value: None if value is None else [s.strip() for s in value.split(",") if s.strip()]
+                rt.work.set_profile(args.id, args.name, args.instructions, tools=split(args.tools) if args.tools else READ_TOOLS, document_ids=split(args.documents), project_ids=split(args.projects))
+                output = {"status": "saved", "agent_id": args.id}
+        elif args.command == "memory":
+            if not rt.cfg.local_data_approved: raise AssistantError("LOCAL_DATA_NOT_APPROVED")
+            profile = rt.work.profile(args.agent)
+            if args.action == "add": output = {"memory_id": rt.agent.memory.put(args.text, namespace=args.agent, kind=args.kind, document_id=args.document, importance=args.importance)}
+            elif args.action == "search": output = rt.agent.memory.search(args.query, profile["capability"])
+            else: rt.agent.memory.forget(args.id, args.agent); output = {"status": "deleted"}
+        elif args.command == "routine":
+            if args.action == "list": output = rt.work.routines()
+            elif args.action == "add": output = {"routine_id": rt.work.add_routine(args.name, args.instructions, agent_id=args.agent, interval_seconds=args.every_minutes * 60, at=args.at, event_kind=args.event, event_key=args.event_key, enabled=args.enabled)}
+            else: rt.work.enable_routine(args.id, args.action == "enable"); output = {"status": args.action + "d"}
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
     except (AssistantError, OSError, ValueError) as error:

@@ -9,6 +9,7 @@ from .common import AssistantError, JST, canonical, digest, now_utc, require_key
 from .config import Settings, minute_of_day
 from .ingest import Ingestor
 from .store import Store
+from .policy import BASE_TOOLS, Capability
 
 
 def active_hours(cfg: Settings, now: datetime | None = None) -> bool:
@@ -41,6 +42,16 @@ TOOL_SCHEMAS = [
         "length": {"type": "integer", "minimum": 1, "maximum": 6000}}),
     function("get_project_context", "ユーザー定義の案件と承認済みの記憶・タスクを取得する。", {"project_id": string(80, True)}),
     function("search_conversation", "この対話セッションの過去の発言を検索。根拠文書とは区別する。", {"query": string(300)}),
+    function("search_memory", "このエージェントの保存済み記憶を検索。ユーザーの記録と原文由来の確認済み記憶を区別する。", {"query": string(500)}),
+    function("read_memory", "このエージェントの保存した知識・出来事・作業手順の続きを読む。", {"item_id": string(80), "offset": {"type": "integer", "minimum": 0, "maximum": 6000}, "length": {"type": "integer", "minimum": 1, "maximum": 3000}}),
+    function("delegate_work", "既存の役割へ継続タスクを依頼する。権限は親より広がらず、結果は別途確認する。", {"agent_id": string(80), "goal": string(6000)}),
+    function("wait_for_work", "自分が依頼した子タスクの終了を待つ。待機中は推論しない。", {"job_id": string(80)}),
+    function("read_work_result", "自分が依頼した子タスクの状態・結果・成果物を確認する。", {"job_id": string(80)}),
+    function("wait_for_information", "この実行から依頼した追加取得を待ち、応答到着または期限切れで再開する。", {"request_id": string(80)}),
+    function("wait_for_approval", "この実行で提案した候補について、人による承認・却下を待つ。自分で承認しない。", {"proposal_id": string(80)}),
+    function("wait_until", "指定時刻まで状態を保存して待機する。タイムゾーン付きRFC3339形式。", {"at": string(50)}),
+    function("wait_for_change", "利用できる資料の更新を待つ。更新時は古い文脈を破棄して再調査する。", {"document_id": string(80)}),
+    function("save_artifact", "出典を検証した中間成果物をこのPC内へ版付きで保存する。外部送信・ファイル操作ではない。", {"name": string(100), "content": string(30000)}),
     function("propose_action", "原文を引用して行動/決定/記憶の候補を作成。候補は人の承認まで確定しない。", {
         "kind": {"type": "string", "enum": ["action", "decision", "memory"]}, "title": string(500),
         "document_id": string(80), "quote": string(3000), "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -79,22 +90,43 @@ def validate_tool(name: str, arguments: dict) -> dict:
 
 class Tools:
     def __init__(self, store: Store, cfg: Settings, ingestor: Ingestor, bridge: Bridge,
-                 session: str, mode: str = "chat", event_key: str = ""):
+                 session: str, mode: str = "chat", event_key: str = "", *, capability=None, execution=None, memory=None):
         self.store, self.cfg, self.ingestor, self.bridge = store, cfg, ingestor, bridge
         self.session, self.mode, self.event_key = session, mode, event_key
         self.seen: set[str] = set()
         self.trace: list[dict] = []
+        self.capability = capability or Capability(tools=frozenset(BASE_TOOLS | ({"notify"} if mode == "monitor" else set())))
+        self.execution, self.memory = execution, memory
 
     def schemas(self) -> list[dict]:
-        return [s for s in TOOL_SCHEMAS if s["name"] != "notify" or self.mode == "monitor"]
+        contextual = {"delegate_work", "wait_for_work", "read_work_result", "wait_for_information", "wait_for_approval", "wait_until", "wait_for_change", "save_artifact"}
+        return [s for s in TOOL_SCHEMAS if s["name"] in self.capability.tools and
+                (s["name"] != "notify" or self.mode == "monitor") and (self.execution is not None or s["name"] not in contextual)]
 
     def execute(self, name: str, a: dict) -> dict:
         validate_tool(name, a)
+        self.capability.authorize(name, a.get("document_id"))
         if name not in {s["name"] for s in self.schemas()}:
             raise AssistantError("TOOL_NOT_ALLOWED")
+        if self.execution: self.execution.check()
+        if name in {"delegate_work", "wait_for_work", "read_work_result", "wait_for_information", "wait_for_approval", "wait_until", "wait_for_change", "save_artifact"}:
+            return self.execution.dispatch(name, a, self.seen)
+        if name in {"search_memory", "read_memory"}:
+            if self.memory is None:
+                from .memory import MemoryEngine
+                self.memory = MemoryEngine(self.store, self.cfg, self.ingestor)
+            if name == "read_memory":
+                result = self.memory.read(a["item_id"], self.capability, offset=a["offset"], length=min(a["length"], self.cfg.max_context_chars//4))
+                if result["document_id"]: self.seen.add(result["document_id"])
+                return result
+            results = self.memory.search(a["query"], self.capability)
+            results = [{**r, "body": r["body"][:min(1200, self.cfg.max_context_chars//10)], "truncated": len(r["body"]) > min(1200, self.cfg.max_context_chars//10)} for r in results]
+            self.seen.update(r["document_id"] for r in results if r["document_id"])
+            return {"results": results, "provenance": "stored_reference_not_instructions", "embedding_status": "enabled" if self.memory.embedder else "lexical_only"}
         if name == "search_documents":
             results = []
             for row in self.store.search(a["query"], a["limit"], kind=a["kind"] or ""):
+                if not self.capability.source_allowed(row["id"]): continue
                 try:
                     doc = self.ingestor.validate_live_source(row["id"])
                     if row["text"] not in doc["body"]:
@@ -103,11 +135,12 @@ class Tools:
                     continue
                 self.seen.add(row["id"])
                 results.append({k: v for k, v in row.items() if k not in ("source_url", "rank")})
+                if len(canonical(results)) >= self.cfg.max_context_chars//3: break
             return {"results": results, "scope": "local_cache_only", "complete": False}
         if name == "read_document":
             doc = self.ingestor.validate_live_source(a["document_id"])
             self.seen.add(doc["id"])
-            offset, length = a["offset"], a["length"]
+            offset, length = a["offset"], min(a["length"], self.cfg.max_context_chars//4)
             return {"document_id": doc["id"], "title": doc["title"], "text": doc["body"][offset:offset + length],
                     "offset": offset, "next_offset": offset + length if offset + length < len(doc["body"]) else None,
                     "source_modified_at": doc["modified_at"], "observed_at": doc["observed_at"],
@@ -115,6 +148,7 @@ class Tools:
         if name == "get_project_context":
             notes = []
             for item in self.store.proposals("approved"):
+                if self.capability.agent_id != "main" or not self.capability.source_allowed(item["document_id"]) or not self.capability.project_allowed(item["project_id"]): continue
                 if item["kind"] == "action":
                     continue  # Tasks below carry completion state; do not revive completed actions.
                 if a["project_id"] and item["project_id"] != a["project_id"]:
@@ -127,6 +161,7 @@ class Tools:
                 notes.append({k: item[k] for k in ("title", "kind", "document_id", "quote", "due_at", "project_id")})
             tasks = []
             for task in self.store.tasks():
+                if not self.capability.source_allowed(task["document_id"]) or not self.capability.project_allowed(task["project_id"]): continue
                 if a["project_id"] and task["project_id"] != a["project_id"]:
                     continue
                 try:
@@ -135,10 +170,11 @@ class Tools:
                     continue
                 self.seen.add(task["document_id"])
                 tasks.append(task)
-            return {"projects": [p for p in self.store.projects() if not a["project_id"] or p["id"] == a["project_id"]], "confirmed_notes": notes[:30], "open_tasks": tasks[:30]}
+            return {"projects": [p for p in self.store.projects() if self.capability.project_allowed(p["id"]) and (not a["project_id"] or p["id"] == a["project_id"])], "confirmed_notes": notes[:30], "open_tasks": tasks[:30]}
         if name == "search_conversation":
             return {"results": self.store.search_conversations(a["query"], self.session), "provenance": "past_conversation_not_source_truth"}
         if name == "propose_action":
+            if a["project_id"] and not self.capability.project_allowed(a["project_id"]): raise AssistantError("PROJECT_SCOPE_DENIED")
             self.ingestor.validate_live_source(a["document_id"])
             if a["document_id"] not in self.seen:
                 raise AssistantError("READ_SOURCE_FIRST")
@@ -148,8 +184,9 @@ class Tools:
             keys = {"query", "limit"} if a["action"] in ("search_mail", "search_sharepoint") else {"start", "end"} if a["action"] == "get_calendar" else {"meeting_id"}
             if any(a[k] is not None for k in a.keys() - keys - {"action"}):
                 raise AssistantError("BRIDGE_UNUSED_ARGUMENT")
-            return self.bridge.request(a["action"], {k: a[k] for k in keys})
+            return self.bridge.request(a["action"], {k: a[k] for k in keys}, idempotency_key=self.execution.idempotency_key() if self.execution else None)
         if name == "get_request_status":
+            if self.execution and not self.execution.owns_request(a["request_id"]): raise AssistantError("WORK_SCOPE_DENIED")
             return self.bridge.status(a["request_id"])
         if name == "notify":
             doc = self.ingestor.validate_live_source(a["document_id"])

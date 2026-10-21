@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "work-assistant"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first Windows work assistant with Amazon Bedrock Responses"
 requires-python = ">=3.11"
 dependencies = []
@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 sigv4 = ["boto3>=1.35,<2"]
 pdf = ["pypdf>=5,<7"]
+semantic = ["sentence-transformers>=3,<6"]
 
 [project.scripts]
 work-assistant = "work_assistant.__main__:main"

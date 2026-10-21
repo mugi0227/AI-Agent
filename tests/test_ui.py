@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from work_assistant.__main__ import synthetic_envelope
 from work_assistant.bedrock import ScriptedClient
@@ -162,13 +163,16 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.app.input.get("1.0", "end-1c"), "止める質問")
         self.assertEqual(str(self.app.stop_button["state"]), "disabled")
 
-    def test_six_pages_small_window_and_markdown_message_remain_usable(self):
+    def test_seven_pages_small_window_and_markdown_message_remain_usable(self):
         from work_assistant.ui_widgets import MessageCard
         self.app.root.geometry("960x700")
         self.rt.store.rename_session(self.app.current_session, "長い会話タイトル" * 10)
         for page in self.app.pages:
             self.app.show_page(page); self.settle(.04)
             self.assertTrue(self.app.pages[page].winfo_ismapped())
+            if page == "work":
+                self.assertTrue(self.app.work_panel.feedback.winfo_ismapped())
+                self.assertLessEqual(self.app.work_panel.feedback.winfo_rooty()+self.app.work_panel.feedback.winfo_height(),self.app.root.winfo_rooty()+self.app.root.winfo_height())
         self.app.show_page("chat")
         self.app.message_rows = []
         self.app.thread.clear()
@@ -178,7 +182,7 @@ class DesktopTests(unittest.TestCase):
         self.assertIsNotNone(card.body.bbox("end-1c"))
         self.assertIn("最後の行", card.body.get("1.0", "end"))
         self.assertGreaterEqual(self.app.input.winfo_height(), 40)
-        self.assertEqual(len(self.app.pages), 6)
+        self.assertEqual(len(self.app.pages), 7)
         self.assertTrue(self.app.connection_badge.winfo_ismapped())
         self.assertLessEqual(self.app.connection_badge.winfo_rootx() + self.app.connection_badge.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
 
@@ -238,6 +242,51 @@ class DesktopTests(unittest.TestCase):
         release.set(); self.wait(lambda: not self.app.loading and len(self.app.message_rows) == 26)
         self.settle(.1)
         self.assertLess(self.app.thread.canvas.yview()[0], .1)
+
+    def test_composer_registers_durable_work_and_manual_run_displays_result(self):
+        self.app.input.insert("1.0", "会議の準備を継続する")
+        self.wait(lambda: str(self.app.register_work["state"]) == "normal")
+        self.app.register_work.invoke()
+        self.wait(lambda: self.app.current_page == "work" and bool(self.app.work_panel.rows))
+        jid = self.app.work_panel.selected()
+        self.assertEqual(self.rt.work.job(jid)["goal"], "会議の準備を継続する")
+        self.assertEqual(self.app.input.get("1.0", "end-1c"), "")
+        self.app.work_panel.run_selected()
+        self.wait(lambda: self.rt.work.job(jid)["status"] == "completed" and "日本語の回答" in self.app.work_panel.detail.get("1.0", "end"))
+        self.app.work_panel.rate(True)
+        self.assertEqual(self.rt.work.metrics()["rated_helpful_rate"], 1)
+
+    def test_waiting_work_is_visible_and_can_be_cancelled(self):
+        from datetime import timedelta
+        from work_assistant.common import now_utc, stamp, canonical
+        response = {"status": "completed", "output": [{"type": "function_call", "call_id": "wait", "name": "wait_until", "arguments": canonical({"at": stamp(now_utc() + timedelta(hours=1))})}]}
+        self.rt.agent.client = ScriptedClient([response])
+        jid = self.app.work_panel.register("指定時刻まで待つ")
+        self.app.work_panel.run_selected()
+        self.wait(lambda: self.rt.work.job(jid)["status"] == "waiting" and "待機条件" in self.app.work_panel.detail.get("1.0", "end"))
+        self.app.work_panel.change("cancel")
+        self.assertEqual(self.rt.work.job(jid)["status"], "cancelled")
+
+    def test_saved_memory_can_be_added_and_removed_from_its_dialog(self):
+        self.app.work_panel.memories(); self.settle(.05)
+        dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
+        tree = next(w for w in dialog.winfo_children() if w.winfo_class() == "Treeview")
+        bar = dialog.winfo_children()[-1]
+        add, remove = bar.winfo_children()
+        with patch("work_assistant.ui_work.simpledialog.askstring", return_value="会議前に測定条件を確認する"):
+            add.invoke()
+        self.wait(lambda: len(tree.get_children()) == 1)
+        tree.selection_set(tree.get_children()[0]); remove.invoke()
+        self.assertFalse(tree.get_children())
+
+    def test_routine_dialog_can_enable_a_saved_schedule(self):
+        rid = self.rt.work.add_routine("定期確認", "資料を確認", interval_seconds=3600)
+        self.app.work_panel.routines(); self.settle(.05)
+        dialog = next(w for w in self.app.root.winfo_children() if w.winfo_class() == "Toplevel")
+        tree = next(w for w in dialog.winfo_children() if w.winfo_class() == "Treeview")
+        tree.selection_set(rid)
+        dialog.winfo_children()[-1].winfo_children()[1].invoke()
+        self.assertTrue(self.rt.work.routines()[0]["enabled"])
 
 
 if __name__ == "__main__": unittest.main()

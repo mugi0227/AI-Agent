@@ -123,8 +123,8 @@ class Ingestor:
                 info = path.stat()
                 if info.st_mtime_ns != metadata["file_mtime_ns"] or info.st_size != metadata["file_size"]:
                     raise AssistantError("SOURCE_CHANGED", "原本が変更されました。再取り込みが必要です")
-            except (AssistantError, OSError):
-                self.store.invalidate(document_id, "unavailable")
+            except (AssistantError, OSError) as error:
+                self.store.invalidate(document_id, "changed" if isinstance(error, AssistantError) and error.code == "SOURCE_CHANGED" else "unavailable")
                 raise AssistantError("SOURCE_UNAVAILABLE", "原本を現在確認できないため利用を停止しました") from None
         return doc
 

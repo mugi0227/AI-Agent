@@ -315,9 +315,13 @@ class ScheduleTests(Fixture):
         self.store.notify("one","確認","本文",did,daily_limit=5,cooldown_minutes=60)
         self.assertFalse(self.store.notify("two","確認","本文",did,daily_limit=5,cooldown_minutes=60))
     def test_persistent_claim(self):
-        agent,_=self.agent([]); scheduler=Scheduler(self.store,self.cfg,agent)
-        self.assertTrue(scheduler._claim("event",now_utc()))
-        self.assertFalse(Scheduler(self.store,self.cfg,agent)._claim("event",now_utc()))
+        from work_assistant.state import DurableState
+        first = DurableState(self.store)
+        jid = first.submit("確認", idempotency_key="event")
+        self.assertEqual(first.claim()["id"], jid)
+        second = DurableState(Store(self.store.path))
+        self.assertEqual(second.submit("確認", idempotency_key="event"), jid)
+        self.assertIsNone(second.claim())
     def test_foreground_yields_monitor(self):
         self.cfg.heartbeat_enabled=True;self.cfg.bedrock.enabled=True;agent,client=self.agent([])
         event=threading.Event();event.set()

@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .common import AssistantError, JST, canonical, digest, now_utc, parse_time, stamp
+from .state_schema import RUNTIME_SCHEMA, invalidate_runtime
+from .policy import execution_guard
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -100,17 +102,20 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as cx:
             version = cx.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise AssistantError("DB_VERSION_UNSUPPORTED")
             cx.executescript(SCHEMA)
-            cx.execute("PRAGMA user_version=2")
+            cx.executescript(RUNTIME_SCHEMA)
+            cx.execute("PRAGMA user_version=3")
             cx.execute("INSERT OR IGNORE INTO chat_sessions(id,title,created_at,updated_at) "
                        "SELECT session,'これまでの会話',min(created_at),max(created_at) FROM conversations GROUP BY session")
 
     def recover_interrupted(self) -> None:
         # Called once by Runtime startup, never by read-only diagnostics opening the DB.
         with self.connection() as cx:
-            cx.execute("UPDATE chat_details SET status='interrupted' WHERE status='running'")
+            cx.execute("UPDATE chat_details SET status='interrupted' WHERE status='running' AND NOT EXISTS "
+                       "(SELECT 1 FROM conversations c JOIN run_leases l ON l.lane='main:'||c.session "
+                       "WHERE c.id=chat_details.message_id AND l.expires_at>?)", (stamp(),))
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -129,6 +134,9 @@ class Store:
         with self.connection() as cx:
             cx.execute("BEGIN IMMEDIATE")
             try:
+                guard = execution_guard.get()
+                if guard is not None:
+                    guard(cx)
                 yield cx
                 cx.execute("COMMIT")
             except BaseException:
@@ -172,17 +180,21 @@ class Store:
                     cx.execute("DELETE FROM chunks WHERE document_id=?", (doc["id"],))
                     # Revised source invalidates prior proposed/confirmed extracts; a human may re-confirm.
                     if old and old["content_hash"] != doc["content_hash"]:
-                        self._clear_derived(cx, doc["id"])
+                        self._clear_derived(cx, doc["id"], revised=True)
                     for index, text in enumerate(split_chunks(doc["body"])):
                         cid = f'{doc["id"]}:{index}'
                         cx.execute("INSERT INTO chunks VALUES(?,?,?,?)", (cid, doc["id"], index, text))
                         tokens = " ".join(lexical_tokens(doc["title"] + " " + text))
                         cx.execute("INSERT INTO search_index(tokens,chunk_id,document_id) VALUES(?,?,?)", (tokens, cid, doc["id"]))
+            if result in ("created", "updated"):
+                from .state import DurableState
+                DurableState._publish(cx, "document", doc["id"], canonical({"document_id": doc["id"], "content_hash": doc["content_hash"], "modified_at": doc["modified_at"], "status": "active"}), now_utc(), 2)
             cx.execute("INSERT INTO events VALUES(?,?,?,?)", (event_id, payload_hash, stamp(), result))
             return result
 
     @staticmethod
-    def _clear_derived(cx: sqlite3.Connection, document_id: str) -> None:
+    def _clear_derived(cx: sqlite3.Connection, document_id: str, *, revised=False, await_revision=False) -> None:
+        invalidate_runtime(cx, document_id, revised=revised, await_revision=await_revision)
         cx.execute("DELETE FROM proposals WHERE document_id=?", (document_id,))
         cx.execute("DELETE FROM notifications WHERE document_id=?", (document_id,))
         # Conservative: summaries may contain paraphrased source text. Clear ALL chat cache.
@@ -194,7 +206,7 @@ class Store:
         with self.transaction() as cx:
             cx.execute("DELETE FROM search_index WHERE document_id=?", (document_id,))
             cx.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
-            self._clear_derived(cx, document_id)
+            self._clear_derived(cx, document_id, await_revision=status == "changed")
             cx.execute("UPDATE documents SET body='',title='',source_url='',metadata='{}',status=? WHERE id=?", (status, document_id))
 
     def tombstone(self, source_key: str, event_id: str, payload_hash: str, observed_at: str) -> str:
@@ -237,7 +249,7 @@ class Store:
         return doc
 
     def documents(self, limit: int = 100, *, kind: str = "") -> list[dict]:
-        sql = "SELECT id,kind,title,source_url,modified_at,observed_at,expires_at,metadata,status FROM documents WHERE status='active' AND expires_at>?"
+        sql = "SELECT id,kind,title,source_url,modified_at,observed_at,expires_at,metadata,status,content_hash FROM documents WHERE status='active' AND expires_at>?"
         args: list = [stamp()]
         if kind:
             sql += " AND kind=?"
@@ -377,6 +389,22 @@ class Store:
             cx.execute("DELETE FROM conversations WHERE session=?", (session,))
             cx.execute("UPDATE chat_sessions SET title='新しい会話',draft='',document_ids='[]',cleared_at=? WHERE id=?", (stamp(), session))
             cx.execute("DELETE FROM state WHERE key=?", ("session_sources:" + session,))
+            cx.execute("DELETE FROM session_summaries WHERE session=?", (session,))
+
+    def commit_answer(self, session, text, metadata, source_ids, *, expected_cleared_at):
+        self.ensure_session(session)
+        with self.transaction() as cx:
+            cleared = cx.execute("SELECT cleared_at FROM chat_sessions WHERE id=?", (session,)).fetchone()[0]
+            if cleared != expected_cleared_at: raise AssistantError("SOURCE_CHANGED_DURING_TURN")
+            for did in source_ids:
+                row = cx.execute("SELECT status,expires_at FROM documents WHERE id=?", (did,)).fetchone()
+                if not row or row["status"] != "active" or row["expires_at"] <= stamp(): raise AssistantError("SOURCE_CHANGED_DURING_TURN")
+            cursor = cx.execute("INSERT INTO conversations(session,role,text,created_at) VALUES(?,'assistant',?,?)", (session, text[:30000], stamp()))
+            cx.execute("INSERT INTO chat_details VALUES(?,'completed',?)", (cursor.lastrowid, canonical(metadata)))
+            previous = cx.execute("SELECT value FROM state WHERE key=?", ("session_sources:" + session,)).fetchone()
+            sources = sorted(set(json.loads(previous[0]) if previous else []) | set(source_ids))
+            cx.execute("INSERT INTO state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("session_sources:" + session, canonical(sources)))
+            cx.execute("UPDATE chat_sessions SET updated_at=? WHERE id=?", (stamp(), session))
 
     def remember_turn(self, session: str, role: str, text: str, *, status: str = "completed", metadata: dict | None = None) -> int:
         if role not in ("user", "assistant"):

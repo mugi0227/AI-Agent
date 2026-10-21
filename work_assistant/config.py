@@ -57,7 +57,15 @@ class Settings:
     notification_cooldown_minutes: int = 60
     max_model_rounds: int = 6
     max_tool_calls: int = 12
+    max_job_model_rounds: int = 40
+    max_job_tool_calls: int = 100
     max_context_chars: int = 50000
+    background_workers: int = 2
+    durable_work_enabled: bool = False
+    memory_embedding_model: str = ""
+    max_memory_items: int = 1000
+    compaction_trigger_messages: int = 24
+    compaction_min_chars: int = 12000
     bedrock: BedrockSettings = field(default_factory=BedrockSettings)
 
     def validate(self) -> None:
@@ -70,12 +78,15 @@ class Settings:
             "meeting_lead_minutes": (5, 120), "notification_daily_limit": (1, 50),
             "notification_cooldown_minutes": (1, 1440), "max_model_rounds": (1, 12),
             "max_tool_calls": (1, 30), "max_context_chars": (4000, 200000),
+            "background_workers": (1, 4), "compaction_trigger_messages": (16, 200), "compaction_min_chars": (2000, 100000),
+            "max_job_model_rounds": (6, 200), "max_job_tool_calls": (12, 500),
+            "max_memory_items": (100, 10000),
         }
         for key, (low, high) in ranges.items():
             value = getattr(self, key)
             if type(value) is not int or not low <= value <= high:
                 raise AssistantError("CONFIG_RANGE", f"{key}が範囲外です")
-        for name in ("local_data_approved", "bridge_enabled", "hydrate_cloud_files", "heartbeat_enabled"):
+        for name in ("local_data_approved", "bridge_enabled", "hydrate_cloud_files", "heartbeat_enabled", "durable_work_enabled"):
             if type(getattr(self, name)) is not bool:
                 raise AssistantError("CONFIG_BOOLEAN")
         for name in ("roots", "drop_folders", "allowed_web_hosts", "extension_ids", "briefing_times"):
@@ -95,6 +106,8 @@ class Settings:
             raise AssistantError("CONFIG_EXTENSION_ID")
         if type(self.outbox) is not str:
             raise AssistantError("CONFIG_OUTBOX")
+        if not isinstance(self.memory_embedding_model, str) or len(self.memory_embedding_model) > 4000:
+            raise AssistantError("CONFIG_STRING")
         b = self.bedrock
         for name in ("endpoint", "region", "model", "auth", "profile", "api_key_env", "reasoning_effort", "ca_bundle"):
             if not isinstance(getattr(b, name), str) or len(getattr(b, name)) > 4000:

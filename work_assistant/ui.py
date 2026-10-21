@@ -17,7 +17,7 @@ from .ui_widgets import (BG, WHITE, INK, MUTED, LINE, TEAL, SOFT, NAV, NAV_HOVER
                          ERROR, MessageCard, ScrollFrame, button, entry, label, setup_theme)
 
 PAGE_TITLES = {"chat": "会話", "documents": "資料・検索", "proposals": "承認待ち",
-               "tasks": "タスク・案件", "notifications": "通知", "settings": "接続・設定"}
+               "tasks": "タスク・案件", "work": "実行管理", "notifications": "通知", "settings": "接続・設定"}
 
 
 def short_time(value):
@@ -62,6 +62,8 @@ class Desktop:
         self.deck = tk.Frame(self.main, bg=BG); self.deck.pack(fill="both", expand=True)
         self.pages = {name: tk.Frame(self.deck, bg=BG) for name in PAGE_TITLES}
         self._build_chat(); self._build_documents(); self._build_other_pages(); self._build_settings()
+        from .ui_work import WorkPanel
+        self.work_panel = WorkPanel(self, self.pages["work"])
         self.root.bind("<Control-n>", lambda _: self.new_session())
         self.root.bind("<Control-l>", lambda _: self.focus_composer())
         self.root.bind("<Escape>", lambda _: self.stop())
@@ -94,7 +96,7 @@ class Desktop:
                        selectcolor=NAV_HOVER, font=(self.root.ui_font, 9), borderwidth=0).pack(anchor="w", padx=14, pady=12)
         tk.Frame(self.sidebar, bg=NAV_HOVER, height=1).pack(fill="x", padx=16)
         self.nav_buttons = {}
-        for name in ("documents", "proposals", "tasks", "notifications", "settings"):
+        for name in ("documents", "proposals", "tasks", "work", "notifications", "settings"):
             nav = button(self.sidebar, PAGE_TITLES[name], lambda n=name: self.show_page(n), dark=True, anchor="w")
             nav.configure(bg=NAV, highlightbackground=NAV)
             nav.pack(fill="x", padx=12, pady=2); self.nav_buttons[name] = nav
@@ -144,6 +146,7 @@ class Desktop:
         bar = tk.Frame(shell, bg=WHITE); bar.pack(fill="x", pady=(7, 0))
         self.attach_button = button(bar, "+  資料を添える", self.choose_documents); self.attach_button.pack(side="left")
         self.counter = label(bar, "0 / 10,000", size=8, fg=MUTED); self.counter.pack(side="left", padx=12)
+        self.register_work = button(bar, "継続タスクに登録", self.register_durable_work); self.register_work.pack(side="left")
         self.send = button(bar, "送信  ↑", self.ask, primary=True); self.send.pack(side="right")
         self.stop_button = button(bar, "■  停止", self.stop); self.stop_button.pack(side="right", padx=7)
         label(self.composer_shell, "Enterで改行  ·  Ctrl+Enterで送信  ·  Ctrl+Nで新しい会話  ·  Escで停止", size=8, fg=MUTED, bg=BG).pack(anchor="w", pady=(7, 0))
@@ -330,6 +333,12 @@ class Desktop:
     def send_shortcut(self, _=None):
         self.ask(); return "break"
 
+    def register_durable_work(self):
+        text = self.input.get("1.0", "end-1c").strip()
+        if not text or len(text) > 10000: return
+        if self.work_panel.register(text, list(self.attached)):
+            self._set_input(""); self.attached = []; self.render_attachments(); self.save_draft(); self.update_controls()
+
     def ask(self, *, prompt=None, document_ids=None, retry_message_id=None):
         if self.loading: return
         text = self.input.get("1.0", "end-1c").strip() if prompt is None else prompt
@@ -367,6 +376,7 @@ class Desktop:
         self.send.configure(state="normal" if not self.loading and not busy and self.ready() and 0 < count <= 10000 else "disabled")
         self.stop_button.configure(state="normal" if busy and not self.controller.active.cancel.is_set() else "disabled")
         self.attach_button.configure(state="disabled" if self.loading else "normal")
+        self.register_work.configure(state="normal" if not self.loading and self.rt.cfg.local_data_approved and 0 < count <= 10000 else "disabled")
         self.input.configure(state="disabled" if self.loading else "normal")
         if busy: self.status.set(("" if self.controller.active.session == self.current_session else "別の会話で ") + self.controller.active.progress)
 
@@ -566,6 +576,7 @@ class Desktop:
     def refresh(self, schedule=True):
         if self.closed: return
         self.refresh_sessions()
+        self.work_panel.refresh()
         for target, key, fetch in [(self.proposal_list, "proposal_rows", self.rt.store.proposals), (self.task_list, "task_rows", self.rt.store.tasks)]:
             rows = fetch()
             if rows != getattr(self, key):
@@ -584,7 +595,9 @@ class Desktop:
         self.settings_cards[2].configure(text="有効" if cfg.heartbeat_enabled else "無効")
         counts = self.rt.store.stats()
         if self.diagnostic_report is None:
-            self.replace(self.info_view, "保存先\n" + str(self.rt.home) + "\n\n" + self.rt.status + "\n\n取得済み資料: " + str(counts.get("documents", 0)) + "件\n\n設定変更後はアプリを再起動してください。診断では、業務データを外部へ送信しません。")
+            retrieval = "全文検索・意味検索（ローカルモデル）" if self.rt.agent.memory.embedder else "全文検索（意味検索モデルは未使用）"
+            if self.rt.agent.memory.embedding_error: retrieval += "。意味検索モデルの設定を確認してください"
+            self.replace(self.info_view, "保存先\n" + str(self.rt.home) + "\n\n" + self.rt.status + "\n\n取得済み資料: " + str(counts.get("documents", 0)) + "件\n記憶検索: " + retrieval + "\n継続タスクの自動実行: " + ("有効" if cfg.durable_work_enabled else "無効") + "\n\n設定変更後はアプリを再起動してください。診断では、業務データを外部へ送信しません。")
         if not self.ready():
             self.notice_label.configure(text="AIへの接続設定が必要です。ローカル検索は先に使えます。" if cfg.local_data_approved else "まず「接続・設定」から、利用する資料とAIの設定を確認してください。")
             if not self.notice.winfo_manager(): self.notice.pack(fill="x", padx=28, pady=(0, 8), before=self.thread)
@@ -635,6 +648,14 @@ class Desktop:
                 label(dialog, payload["title"], size=15, bold=True, bg=BG, wraplength=760).pack(anchor="w", padx=28, pady=20)
                 label(dialog, "取得 " + short_time(payload["observed_at"]) + "  ·  確認期限 " + short_time(payload["expires_at"]), size=9, fg=MUTED, bg=BG).pack(anchor="w", padx=28, pady=(0, 12))
                 self.replace(self.text(dialog), payload["body"]); self.status.set("資料の原文を表示しました")
+            elif kind == "work_detail": self.work_panel.render(token, payload)
+            elif kind == "memory_changed":
+                dialog, reload_memory = token
+                if dialog.winfo_exists(): reload_memory()
+                self.status.set("記憶を保存しました")
+            elif kind == "work_run":
+                self.work_panel.refresh(); self.work_panel.select()
+                self.status.set("継続タスク: " + {"completed": "完了", "waiting": "条件待ち", "idle": "実行できるタスクはありません", "disabled": "接続設定が必要です", "failed": "失敗"}.get(payload["status"], payload["status"]))
             elif kind == "scan": self.status.set("資料の確認が完了しました"); self.search(); self.refresh(schedule=False)
             elif kind == "decided": self.status.set("候補を更新しました"); self.refresh(schedule=False)
             elif kind == "diagnosis":

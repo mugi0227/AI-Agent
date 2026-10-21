@@ -17,6 +17,24 @@ from work_assistant.store import Store
 
 
 class ChatStorageTests(Fixture):
+    def test_migrate_schema2_keeps_named_chat_draft_and_message_metadata(self):
+        path = self.home / "schema2.sqlite3"
+        with closing(sqlite3.connect(path)) as cx:
+            cx.executescript("""PRAGMA user_version=2;
+                CREATE TABLE conversations(id INTEGER PRIMARY KEY AUTOINCREMENT,session TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE chat_sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,draft TEXT NOT NULL DEFAULT '',document_ids TEXT NOT NULL DEFAULT '[]',cleared_at TEXT);
+                CREATE TABLE chat_details(message_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,status TEXT NOT NULL DEFAULT 'completed',metadata TEXT NOT NULL DEFAULT '{}');""")
+            cx.execute("INSERT INTO chat_sessions VALUES('main','保存済み会話',?,?,0,'未送信の下書き','[]',NULL)", (stamp(),stamp()))
+            cx.execute("INSERT INTO conversations VALUES(1,'main','assistant','保存済みの回答',?)", (stamp(),))
+            cx.execute("INSERT INTO chat_details VALUES(1,'completed','{\"trace\":[]}')"); cx.commit()
+        migrated=Store(path)
+        self.assertEqual(migrated.session("main")["title"],"保存済み会話")
+        self.assertEqual(migrated.session("main")["draft"],"未送信の下書き")
+        self.assertEqual(migrated.messages("main")[0]["metadata"],{"trace":[]})
+        with migrated.connection() as cx:
+            self.assertEqual(cx.execute("PRAGMA user_version").fetchone()[0],3)
+            self.assertEqual(cx.execute("SELECT count(*) FROM work_jobs").fetchone()[0],0)
+
     def test_migrate_existing_history_without_losing_it(self):
         path = self.home / "legacy.sqlite3"
         with closing(sqlite3.connect(path)) as cx:
@@ -26,7 +44,7 @@ class ChatStorageTests(Fixture):
         store = Store(path)
         self.assertEqual(store.history("main")[0]["content"], "以前の質問")
         self.assertEqual(store.sessions()[0]["id"], "main")
-        with store.connection() as cx: self.assertEqual(cx.execute("PRAGMA user_version").fetchone()[0], 2)
+        with store.connection() as cx: self.assertEqual(cx.execute("PRAGMA user_version").fetchone()[0], 3)
 
     def test_sessions_drafts_and_archive_survive_restart(self):
         first, second = self.store.new_session(), self.store.new_session()

@@ -50,13 +50,18 @@ class Bridge:
                 raise AssistantError("OUTBOX_LINK_BLOCKED")
         return folder
 
-    def request(self, action: str, arguments: dict) -> dict:
+    def request(self, action: str, arguments: dict, *, idempotency_key: str | None = None) -> dict:
         folder = self._folder()
         arguments = validate_arguments(action, arguments)
-        request_id = str(uuid.uuid4())
+        request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, idempotency_key)) if idempotency_key else str(uuid.uuid4())
         now = now_utc()
         expires_at = stamp(now + timedelta(minutes=15))
         with self.store.transaction() as cx:
+            if idempotency_key:
+                existing = cx.execute("SELECT * FROM bridge_requests WHERE id=?", (request_id,)).fetchone()
+                if existing:
+                    if existing["action"] != action or existing["arguments"] != canonical(arguments): raise AssistantError("IDEMPOTENCY_CONFLICT")
+                    return {"request_id": request_id, "status": existing["status"], "expires_at": existing["expires_at"]}
             previous = cx.execute("SELECT id,expires_at FROM bridge_requests WHERE action=? AND arguments=? AND status='pending' AND expires_at>?", (action, canonical(arguments), stamp(now))).fetchone()
             if previous:
                 request_id, expires_at = previous["id"], previous["expires_at"]
@@ -110,8 +115,10 @@ class Bridge:
                 raise AssistantError("BRIDGE_TOMBSTONE_BLOCKED")
         for doc in raw["documents"]:
             self.ingestor.envelope(doc)
-        with self.store.connection() as cx:
+        with self.store.transaction() as cx:
             cx.execute("UPDATE bridge_requests SET status=?,result=? WHERE id=?", ("completed" if raw["status"] == "ok" else "failed", canonical({"response_hash": digest(canonical(raw)), "coverage": raw["coverage"], "error_code": raw["error_code"], "document_count": len(raw["documents"])}), row["id"]))
+            from .state import DurableState
+            DurableState._publish(cx, "bridge", row["id"], canonical({"request_id": row["id"]}), now_utc())
         return raw["status"]
 
     def status(self, request_id: str) -> dict:
