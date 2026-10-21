@@ -311,13 +311,13 @@ class DesktopTests(unittest.TestCase):
         self.app.root.geometry("960x700"); self.settle()
         self.assertIn("1 保存と資料", [panel.tabs.tab(tab, "text") for tab in panel.tabs.tabs()])
         for widget in (panel.save_button, panel.test_button, panel.chat_button):
-            self.assertTrue(widget.winfo_ismapped())
+            self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertGreaterEqual(widget.winfo_rootx(), self.app.root.winfo_rootx())
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
         self.assertEqual(str(panel.chat_button["state"]), "disabled")
         for widget in self.app.nav_buttons.values():
-            self.assertTrue(widget.winfo_ismapped())
+            self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
 
     def test_gui_setup_import_question_and_citation_without_json_edit_or_restart(self):
@@ -435,7 +435,7 @@ class DesktopTests(unittest.TestCase):
         dialog.geometry("640x400"); self.settle(.05)
         actions = next(w for w in dialog.winfo_children() if w.winfo_class() == "Frame")
         for widget in actions.winfo_children():
-            self.assertTrue(widget.winfo_ismapped())
+            self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), dialog.winfo_rooty() + dialog.winfo_height())
         choose = next(w for w in actions.winfo_children() if w["text"] == "この資料を添える")
         self.assertEqual(str(choose["state"]), "disabled")
@@ -471,7 +471,7 @@ class DesktopTests(unittest.TestCase):
         self.app.root.report_callback_exception = lambda kind, error, trace: self.callback_errors.append(str(error))
         self.app.root.geometry("960x700"); self.app.show_page("settings"); self.settle()
         for widget in [*self.app.nav_buttons.values(), self.app.settings_panel.save_button, self.app.settings_panel.test_button]:
-            self.assertTrue(widget.winfo_ismapped())
+            self.assertTrue(widget.winfo_ismapped(), str(widget.cget("text")) if "text" in widget.keys() else str(widget))
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.app.root.winfo_rootx() + self.app.root.winfo_width())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.app.root.winfo_rooty() + self.app.root.winfo_height())
 

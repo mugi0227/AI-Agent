@@ -75,32 +75,33 @@ class Desktop:
     def _build_sidebar(self):
         self.sidebar = tk.Frame(self.root, bg=NAV, width=244)
         self.sidebar.pack(side="left", fill="y"); self.sidebar.pack_propagate(False)
-        brand = tk.Frame(self.sidebar, bg=NAV); brand.pack(fill="x", padx=20, pady=(27, 22))
-        label(brand, "W", size=19, bold=True, bg=TEAL, fg=WHITE, padx=10, pady=2).pack(side="left", padx=(0, 10))
-        words = tk.Frame(brand, bg=NAV); words.pack(side="left")
-        label(words, "Work Assistant", size=12, bold=True, bg=NAV, fg=WHITE).pack(anchor="w")
-        label(words, "会話・資料検索・タスク管理", size=8, bg=NAV, fg=NAV_MUTED).pack(anchor="w", pady=(3, 0))
-        button(self.sidebar, "+  新しい会話", self.new_session, primary=True).pack(fill="x", padx=16, pady=(0, 16))
-        entry(self.sidebar, self.session_filter, dark=True).pack(fill="x", padx=16, ipady=8)
-        label(self.sidebar, "会話を検索", size=8, bg=NAV, fg=NAV_MUTED).pack(anchor="w", padx=18, pady=(5, 15))
+        # Reserve navigation before allocating the remaining height to history.
+        # Windows font metrics and enlarged fonts must not push settings offscreen.
+        label(self.sidebar, "履歴はこのPCに保存", size=8, bg=NAV, fg=NAV_MUTED).pack(side="bottom", anchor="w", padx=20, pady=(8, 12))
+        navigation = tk.Frame(self.sidebar, bg=NAV); navigation.pack(side="bottom", fill="x")
+        self.nav_buttons = {}
+        for name in ("documents", "proposals", "tasks", "work", "notifications", "settings"):
+            nav = button(navigation, PAGE_TITLES[name], lambda n=name: self.show_page(n), dark=True, anchor="w")
+            nav.configure(bg=NAV, highlightbackground=NAV, pady=4)
+            nav.pack(fill="x", padx=12, pady=2); self.nav_buttons[name] = nav
+        tk.Frame(self.sidebar, bg=NAV_HOVER, height=1).pack(side="bottom", fill="x", padx=16)
+        tk.Checkbutton(self.sidebar, text="保管済みを表示", variable=self.show_archived, command=self.refresh_sessions,
+                       bg=NAV, fg=NAV_MUTED, activebackground=NAV, activeforeground=WHITE,
+                       selectcolor=NAV_HOVER, font=(self.root.ui_font, 9), borderwidth=0).pack(side="bottom", anchor="w", padx=14, pady=8)
+        brand = tk.Frame(self.sidebar, bg=NAV); brand.pack(fill="x", padx=16, pady=(18, 16))
+        label(brand, "W", size=16, bold=True, bg=TEAL, fg=WHITE, padx=8, pady=2).pack(side="left", padx=(0, 9))
+        label(brand, "Work Assistant", size=11, bold=True, bg=NAV, fg=WHITE).pack(side="left")
+        button(self.sidebar, "+  新しい会話", self.new_session, primary=True).pack(fill="x", padx=16, pady=(0, 12))
+        entry(self.sidebar, self.session_filter, dark=True).pack(fill="x", padx=16, ipady=7)
+        label(self.sidebar, "会話を検索", size=8, bg=NAV, fg=NAV_MUTED).pack(anchor="w", padx=18, pady=(3, 8))
         self.session_caption = label(self.sidebar, "最近の会話", size=9, bold=True, bg=NAV, fg=NAV_MUTED)
-        self.session_caption.pack(anchor="w", padx=18, pady=(0, 7))
+        self.session_caption.pack(anchor="w", padx=18, pady=(0, 4))
         self.session_list = tk.Listbox(self.sidebar, bg=NAV, fg="#dfebf3", selectbackground=NAV_HOVER,
                                        selectforeground=WHITE, relief="flat", borderwidth=0, highlightthickness=0,
                                        activestyle="none", exportselection=False, font=(self.root.ui_font, 10),
                                        selectborderwidth=0, height=1)
         self.session_list.pack(fill="both", expand=True, padx=12)
         self.session_list.bind("<<ListboxSelect>>", self.select_session)
-        tk.Checkbutton(self.sidebar, text="保管した会話を表示", variable=self.show_archived, command=self.refresh_sessions,
-                       bg=NAV, fg=NAV_MUTED, activebackground=NAV, activeforeground=WHITE,
-                       selectcolor=NAV_HOVER, font=(self.root.ui_font, 9), borderwidth=0).pack(anchor="w", padx=14, pady=12)
-        tk.Frame(self.sidebar, bg=NAV_HOVER, height=1).pack(fill="x", padx=16)
-        self.nav_buttons = {}
-        for name in ("documents", "proposals", "tasks", "work", "notifications", "settings"):
-            nav = button(self.sidebar, PAGE_TITLES[name], lambda n=name: self.show_page(n), dark=True, anchor="w")
-            nav.configure(bg=NAV, highlightbackground=NAV, pady=5)
-            nav.pack(fill="x", padx=12, pady=2); self.nav_buttons[name] = nav
-        label(self.sidebar, "履歴はこのPCに保存", size=8, fg=NAV_MUTED, bg=NAV).pack(anchor="w", padx=22, pady=(17, 20))
 
     def _build_header(self):
         header = tk.Frame(self.main, bg=WHITE, padx=28, pady=17); header.pack(fill="x")
