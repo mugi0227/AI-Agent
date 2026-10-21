@@ -122,7 +122,10 @@ class RoundedButton(SurfaceControl, tk.Button):
         disabled = str(self.cget("state")) == "disabled"
         fill = self.disabled_fill if disabled else self.pressed_fill if self.pressing else self.hover_fill if self.hovering else self.normal_fill
         foreground = self.disabled_fg if disabled else self.normal_fg
-        focused = self.focus_get() == self
+        # A native ttk popup owns a Tcl-only focus window. Tkinter cannot map
+        # that window to a Python widget; it is not this button's focus.
+        try: focused = self.focus_get() == self
+        except (KeyError, tk.TclError): focused = False
         self.surface.appearance(fill, self.focus_color if focused else self.normal_border)
         tk.Button.configure(self, bg=fill, fg=foreground, activebackground=fill,
                             activeforeground=foreground, cursor="arrow" if disabled else "hand2")

@@ -43,10 +43,10 @@ def validate_setup(cfg: Settings, home: Path) -> None:
     except AssistantError as error:
         field = "model" if "MODEL" in error.code or "PROFILE" in error.code else "region" if "REGION" in error.code else "endpoint"
         raise SetupError(field, {
-            "BEDROCK_ENDPOINT_BLOCKED": "接続先は指定地域のBedrock HTTPS URLと /openai/v1 を指定してください。",
+            "BEDROCK_ENDPOINT_BLOCKED": "接続先は指定地域のBedrock HTTPS URLを指定してください。ClaudeはRuntimeのホストのみ、OpenAIは末尾に /openai/v1 を指定します。",
             "BEDROCK_REGION_INVALID": "AWSの地域を確認してください。例: ap-northeast-1。",
             "INFERENCE_PROFILE_REQUIRED": "Bedrock Runtimeでは、global. または us. で始まる推論プロファイルIDが必要です。",
-            "PROFILE_REGION_MISMATCH": "us. の推論プロファイルには米国・カナダの地域を指定してください。",
+            "PROFILE_REGION_MISMATCH": "推論プロファイルの接頭辞とAWSの地域を確認してください。地域をまたぐ場合は利用するプロファイルの処理地域も確認します。",
             "MANTLE_MODEL_ID_INVALID": "Bedrock Mantleではglobal. や us. を付けないモデルIDを指定してください。",
         }.get(error.code, "モデルID・地域・接続先の組み合わせを確認してください。")) from None
 

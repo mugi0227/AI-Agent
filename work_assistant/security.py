@@ -77,6 +77,15 @@ def safe_web_url(url: str, hosts: list[str]) -> str:
         raise AssistantError("WEB_URL_INVALID") from None
 
 
+def model_api(model: str) -> str:
+    """Only model families whose text/tool protocols are implemented here."""
+    if re.fullmatch(r"(?:(?:global|us)\.)?openai\.[a-z0-9.-]+", model):
+        return "responses"
+    if re.fullmatch(r"(?:(?:global|us|eu|apac|au|jp)\.)?anthropic\.claude-(?:3[.-]|sonnet-|haiku-|opus-)[a-z0-9.:-]+", model):
+        return "converse"
+    raise AssistantError("BEDROCK_MODEL_INVALID")
+
+
 def validate_bedrock(b: BedrockSettings, *, live: bool = True) -> tuple[str, str]:
     if live and (not b.enabled or not b.data_transfer_approved):
         raise AssistantError("MODEL_EGRESS_NOT_APPROVED", "Bedrockへの送信承認と有効化が必要です")
@@ -86,20 +95,25 @@ def validate_bedrock(b: BedrockSettings, *, live: bool = True) -> tuple[str, str
         mantle = f"bedrock-mantle.{b.region}.api.aws"
         if p.scheme != "https" or p.hostname not in (runtime, mantle) or p.username or p.password:
             raise AssistantError("BEDROCK_ENDPOINT_BLOCKED", "承認されたBedrockエンドポイントだけを使用します")
-        if p.port not in (None, 443) or p.query or p.fragment or p.path.rstrip("/") != "/openai/v1":
+        api = model_api(b.model)
+        expected_path = "" if api == "converse" else "/openai/v1"
+        if p.port not in (None, 443) or p.query or p.fragment or p.path.rstrip("/") != expected_path:
             raise AssistantError("BEDROCK_ENDPOINT_BLOCKED")
         if not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d", b.region):
             raise AssistantError("BEDROCK_REGION_INVALID")
-        if not re.fullmatch(r"(?:(?:global|us)\.)?openai\.[a-z0-9.-]+", b.model):
-            raise AssistantError("BEDROCK_MODEL_INVALID")
         if p.hostname == runtime:
-            if not b.model.startswith(("global.", "us.")):
+            if api == "responses" and not b.model.startswith(("global.", "us.")):
                 raise AssistantError("INFERENCE_PROFILE_REQUIRED")
-            if live and not b.cross_region_approved:
+            prefix = b.model.split(".", 1)[0]
+            if live and prefix in ("global", "us", "eu", "apac", "au", "jp") and not b.cross_region_approved:
                 raise AssistantError("CROSS_REGION_NOT_APPROVED", "推論プロファイルの処理地域を承認してください")
             if b.model.startswith("us.") and not b.region.startswith(("us-", "ca-")):
                 raise AssistantError("PROFILE_REGION_MISMATCH")
+            if (prefix == "eu" and not b.region.startswith("eu-")) or (prefix == "apac" and not b.region.startswith("ap-")) or (prefix == "au" and not b.region.startswith("ap-southeast-")) or (prefix == "jp" and b.region not in ("ap-northeast-1", "ap-northeast-3")):
+                raise AssistantError("PROFILE_REGION_MISMATCH")
             return b.endpoint.rstrip("/"), "bedrock"
+        if api == "converse":
+            raise AssistantError("BEDROCK_ENDPOINT_BLOCKED", "ClaudeはBedrock Runtimeを使用します")
         if b.model.startswith(("global.", "us.")):
             raise AssistantError("MANTLE_MODEL_ID_INVALID")
         if b.model == "openai.gpt-6-luna" and b.region != "us-east-1":

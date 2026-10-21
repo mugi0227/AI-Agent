@@ -10,7 +10,8 @@ from tkinter import ttk, filedialog
 from .chat import error_help
 from .common import AssistantError, safe_code, stamp
 from .config import minute_of_day
-from .security import expanded, validate_bedrock
+from .security import expanded, model_api, validate_bedrock
+from .model_catalog import list_models
 from .setup_flow import SetupError, connection_fingerprint, probe_connection, validate_setup
 from .ui_widgets import BG, WHITE, INK, MUTED, TEAL, LINE, SOFT, ERROR, ScrollFrame, RoundedPanel, button, entry, label
 
@@ -24,6 +25,10 @@ class SettingsPanel:
         self.busy, self.dirty = False, False
         self.probe_override = None
         self.events = queue.Queue()
+        self.catalog_events = queue.Queue()
+        self.catalog_choices = []
+        self.catalog_context = None
+        self.catalog_loading = False
         self.vars, self.fields, self.field_tabs = {}, {}, {}
         self.inputs, self.buttons = [], []
         self.status = tk.StringVar(value="設定は保存後すぐに反映されます。定期実行は任意です。")
@@ -102,18 +107,28 @@ class SettingsPanel:
 
     def _build_connection(self):
         parent = self.frames[1].inner; cfg = self.base.bedrock
-        label(parent, "会社から指定された地域・モデルID・認証方式を入力してください。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
+        label(parent, "地域と認証を設定し、「モデル一覧を取得」から利用するAIを選んでください。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
         self.check(1, "enabled", "AIへの接続を有効にする", cfg.enabled)
         self.field(1, "region", "AWSの地域", cfg.region, "例: ap-northeast-1。地域を変えると標準の接続先も更新します。")
-        self.field(1, "model", "モデルID・推論プロファイルID", cfg.model, "会社で利用を許可されたIDを指定してください。")
         label(parent, "認証方式", bold=True, bg=WHITE).pack(anchor="w")
         auth = ttk.Combobox(parent, textvariable=self.variable("auth", AUTH_NAMES[cfg.auth]), values=list(AUTH_NAMES.values()), state="readonly")
         auth.pack(fill="x", pady=(5, 12)); self.inputs.append(auth)
         self.field(1, "profile", "AWSプロファイル名", cfg.profile, "AWSプロファイル・SSO方式で使用。空欄は既定の認証設定を使用します。SSOは会社の手順で事前にログインしてください。")
         self.field(1, "api_key_env", "APIキーの環境変数名", cfg.api_key_env, "APIキー方式で使用。キー本体は入力しません。会社の手順で登録した環境変数名を指定します。")
+        model_bar = tk.Frame(parent, bg=WHITE); model_bar.pack(fill="x", pady=(4, 6)); self.model_bar = model_bar
+        label(model_bar, "利用するモデル", bold=True, bg=WHITE).pack(side="left")
+        self.catalog_button = button(model_bar, "モデル一覧を取得", self.load_catalog)
+        self.catalog_button.pack(side="right"); self.buttons.append(self.catalog_button)
+        self.model_selection = tk.StringVar(value="地域と認証を設定して一覧を取得してください")
+        self.model_combo = ttk.Combobox(parent, textvariable=self.model_selection, values=[], state="disabled", width=40)
+        self.model_combo.pack(fill="x", pady=(0, 6))
+        self.model_combo.bind("<<ComboboxSelected>>", self.select_model)
+        self.catalog_label = label(parent, "OpenAI・Claudeに対応。一覧取得は設定を保存せず、AI推論やモデルの利用申込みも行いません。", fg=MUTED, bg=WHITE, size=9, wraplength=620, justify="left")
+        self.catalog_label.pack(fill="x", pady=(0, 12))
+        self.field(1, "model", "モデルID・推論プロファイルID（手入力も可）", cfg.model, "一覧で選ぶとIDと接続先を設定します。会社で許可されたモデルを使用してください。")
         self.check(1, "data_transfer_approved", "会社の承認範囲で、質問・参照資料をBedrockへ送信することを許可する", cfg.data_transfer_approved)
         self.check(1, "cross_region_approved", "推論プロファイルの処理地域を確認し、地域をまたぐ処理を許可する", cfg.cross_region_approved)
-        label(parent, "Bedrock Runtimeの推論プロファイルを使う場合、処理地域の許可も必要です。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
+        label(parent, "地域をまたぐ推論プロファイルでは処理地域の許可も必要です。Claudeのリージョン内モデルでは不要です。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
         self.advanced = tk.BooleanVar(value=False)
         advanced = tk.Frame(parent, bg=WHITE)
         toggle = tk.Checkbutton(parent, text="接続先・証明書・利用上限を表示", variable=self.advanced, bg=WHITE, font=(self.app.root.ui_font, 10), command=lambda: advanced.pack(fill="x") if self.advanced.get() else advanced.pack_forget())
@@ -133,6 +148,9 @@ class SettingsPanel:
         self._last_region = cfg.region
         self.vars["region"].trace_add("write", self.region_changed)
         self.vars["auth"].trace_add("write", self.auth_changed)
+        self.vars["model"].trace_add("write", self.model_changed)
+        for name in ("region", "auth", "profile", "api_key_env", "ca_bundle"):
+            self.vars[name].trace_add("write", self.invalidate_catalog)
         self.auth_changed()
         button(parent, "次へ：接続確認", lambda: self.tabs.select(2)).pack(anchor="e", pady=10)
 
@@ -140,14 +158,89 @@ class SettingsPanel:
         is_profile = self.vars["auth"].get() == AUTH_NAMES["sigv4"]
         for name, visible in (("profile", is_profile), ("api_key_env", not is_profile)):
             row = self.fields[name].field_row
-            if visible: row.pack(fill="x", pady=(0, 12), before=self.fields["data_transfer_approved"])
+            if visible: row.pack(fill="x", pady=(0, 12), before=self.model_bar)
             else: row.pack_forget()
 
     def region_changed(self, *_):
         value = self.vars["region"].get().strip(); endpoint = self.vars["endpoint"]
-        for template in ("https://bedrock-runtime.{}.amazonaws.com/openai/v1", "https://bedrock-mantle.{}.api.aws/openai/v1"):
+        for template in ("https://bedrock-runtime.{}.amazonaws.com/openai/v1", "https://bedrock-runtime.{}.amazonaws.com", "https://bedrock-mantle.{}.api.aws/openai/v1"):
             if endpoint.get() == template.format(self._last_region): endpoint.set(template.format(value)); break
         self._last_region = value
+
+    def model_changed(self, *_):
+        mid, region = self.vars["model"].get().strip(), self.vars["region"].get().strip()
+        matches = [c for c in self.catalog_choices if c.model == mid]
+        self.model_selection.set(matches[0].title if matches else "モデルIDを手入力中" if self.catalog_choices else "地域と認証を設定して一覧を取得してください")
+        try: api = model_api(mid)
+        except AssistantError: return
+        endpoint = self.vars["endpoint"]
+        root = f"https://bedrock-runtime.{region}.amazonaws.com"
+        if endpoint.get().rstrip("/") in (root, root + "/openai/v1"):
+            target = root if api == "converse" else root + "/openai/v1"
+            if endpoint.get() != target: endpoint.set(target)
+
+    def catalog_key(self):
+        return tuple(self.vars[n].get().strip() for n in ("region", "auth", "profile", "api_key_env", "ca_bundle"))
+
+    def invalidate_catalog(self, *_):
+        if self.catalog_context is not None and self.catalog_key() != self.catalog_context:
+            self.catalog_choices = []; self.model_combo.configure(values=[], state="disabled")
+            self.model_selection.set("地域・認証が変更されました。モデル一覧を再取得してください")
+            self.catalog_label.configure(text="一覧は以前の接続設定のものです。「モデル一覧を取得」で更新してください。", fg=MUTED)
+
+    def load_catalog(self):
+        if self.busy: return
+        cfg = copy.deepcopy(self.base.bedrock)
+        for name in ("region", "profile", "api_key_env", "ca_bundle"):
+            setattr(cfg, name, self.vars[name].get().strip())
+        cfg.auth = next((k for k, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
+        key = self.catalog_key()
+        self.busy = self.catalog_loading = True; self.set_busy()
+        self.catalog_label.configure(text="AWSから対応モデルと利用条件を取得しています…", fg=TEAL)
+        self.status.set("モデル一覧を取得しています。入力内容は保存しません。")
+        def work():
+            try: self.catalog_events.put((key, list_models(cfg), None))
+            except Exception as error: self.catalog_events.put((key, None, safe_code(error)))
+        threading.Thread(target=work, daemon=True, name="assistant-model-catalog").start()
+
+    def select_model(self, _=None):
+        if self.busy or self.catalog_context != self.catalog_key(): return
+        choice = next((c for c in self.catalog_choices if c.title == self.model_selection.get()), None)
+        if choice is None: return
+        self.vars["model"].set(choice.model)
+        root = f"https://bedrock-runtime.{self.vars['region'].get().strip()}.amazonaws.com"
+        self.vars["endpoint"].set(root if choice.api == "converse" else root + "/openai/v1")
+        api = "Claude / Converse" if choice.api == "converse" else "OpenAI / Responses"
+        self.catalog_label.configure(text=f"{api}。処理先: {', '.join(choice.regions)}。一覧の状態は推論権限の保証ではありません。保存して接続テストを行ってください。", fg=MUTED)
+
+    def pump_catalog(self):
+        try: key, result, error = self.catalog_events.get_nowait()
+        except queue.Empty: return
+        self.busy = self.catalog_loading = False
+        self.catalog_choices = []; self.model_combo.configure(values=[])
+        if key != self.catalog_key():
+            self.catalog_context = key; self.invalidate_catalog()
+            self.status.set("取得中に接続設定が変わりました。モデル一覧を再取得してください。")
+        elif error:
+            title, help_text = error_help(error)
+            self.catalog_label.configure(text=title + "。" + help_text + " 一覧取得にはListFoundationModels・ListInferenceProfilesの権限が必要です。IDの手入力もできます。", fg=ERROR)
+            self.model_selection.set("一覧を取得できませんでした。再取得またはIDの手入力ができます")
+            self.status.set("モデル一覧を取得できませんでした。認証・地域・一覧取得の権限を確認してください。")
+        else:
+            self.catalog_context = key; self.catalog_choices = result.choices
+            self.model_combo.configure(values=[c.title for c in result.choices])
+            self.model_changed()
+            if not result.choices: self.model_selection.set("選択可能な対応モデルがありません。地域・権限を確認してください")
+            self.catalog_label.configure(text=f"対応モデル: {len(result.choices)}件。利用不可: {result.excluded}件を除外。" + " ".join(result.warnings) + " 選択後に保存して接続テストを行ってください。", fg=MUTED)
+            self.status.set("モデル一覧を取得しました。利用するモデルを選んでください。" if result.choices else "対応モデルが見つかりませんでした。地域・利用条件を確認するか、IDを手入力してください。")
+        self.set_busy()
+        if not error and key == self.catalog_key():
+            def reveal():
+                if self.app.closed: return
+                scroll = self.frames[1]
+                y = self.model_bar.winfo_rooty() - scroll.inner.winfo_rooty()
+                scroll.canvas.yview_moveto(max(0, (y - 20) / max(1, scroll.inner.winfo_height())))
+            self.app.root.after_idle(reveal)
 
     def _build_review(self):
         parent = self.frames[2].inner
@@ -193,6 +286,10 @@ class SettingsPanel:
         for name in ("enabled", "data_transfer_approved", "cross_region_approved", "region", "model", "profile", "api_key_env", "endpoint", "ca_bundle"):
             value = self.vars[name].get(); setattr(cfg.bedrock, name, value.strip() if isinstance(value, str) else value)
         cfg.bedrock.auth = next((key for key, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
+        choice = next((c for c in self.catalog_choices if c.model == cfg.bedrock.model), None)
+        # Use AWS's streaming capability signal without changing the saved base
+        # settings during discovery. Manual IDs keep the current preference.
+        if choice is not None: cfg.bedrock.streaming = choice.streaming
         validate_setup(cfg, self.rt.home)
         if cfg.bedrock.ca_bundle and not expanded(cfg.bedrock.ca_bundle).is_file():
             raise SetupError("ca_bundle", "CA証明書ファイルが見つかりません。ファイルの場所を確認してください。")
@@ -254,9 +351,11 @@ class SettingsPanel:
         for widget in self.inputs + self.buttons + [self.save_button, self.test_button]:
             state = "disabled" if self.busy else "readonly" if isinstance(widget, ttk.Combobox) else "normal"
             widget.configure(state=state)
+        self.model_combo.configure(state="readonly" if self.catalog_choices and not self.busy else "disabled")
         self.chat_button.configure(state="normal" if not self.busy and not self.dirty and self.app.ready() else "disabled")
 
     def pump(self):
+        self.pump_catalog()
         try: candidate, saved, test, error = self.events.get_nowait()
         except queue.Empty: return
         self.busy = False
@@ -284,7 +383,8 @@ class SettingsPanel:
     def refresh(self):
         cfg = self.rt.cfg
         self.summary.configure(text="ローカル保存: " + ("許可済み" if cfg.local_data_approved else "未設定") +
-            f"\n資料フォルダ: {len(cfg.roots)}件（資料なしでも質問できます）\nAI接続の設定: " + ("設定済み" if self.app.ready() else "未完了"))
+            f"\n資料フォルダ: {len(cfg.roots)}件（資料なしでも質問できます）\nAI接続の設定: " + ("設定済み" if self.app.ready() else "未完了") +
+            f"\n保存済みのモデル: {cfg.bedrock.model}\n保存済みのAWS地域: {cfg.bedrock.region}")
         result = self.rt.store.get_state("ui.connection_probe", {})
         if self.probe_override and self.probe_override["fingerprint"] == connection_fingerprint(cfg): result = self.probe_override
         current = result.get("fingerprint") == connection_fingerprint(cfg)

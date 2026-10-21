@@ -26,7 +26,7 @@ Box / OneDrive 専用受渡フォルダ ──→ 正規化・重複排除 ─�
                                                               ↑       ↕
 Box / OneDrive / SharePoint同期フォルダ ──→ 許可した資料のみ ───┘   自作Agent
                                                                       ↕
-Chrome / Edgeで文章を確認 → Native Messaging → ローカル受信箱   Bedrock Responses
+Chrome / Edgeで文章を確認 → Native Messaging → ローカル受信箱   Bedrock OpenAI / Claude
                                                                       ↕
                                                         デスクトップUI / CLI
 ```
@@ -37,7 +37,7 @@ Chrome / Edgeで文章を確認 → Native Messaging → ローカル受信箱  
 
 | 領域 | 内容 |
 |---|---|
-| 対話 | OpenAI Responses形式のBedrock呼び出し、クライアント側ツール、reasoning項目の引き継ぎ、出典と鮮度、回数/文脈/使用量上限 |
+| 対話 | BedrockのOpenAI Responses / Claude Converse、クライアント側ツール、reasoning項目の引き継ぎ、出典と鮮度、回数/文脈/使用量上限 |
 | 継続タスク | SQLiteの状態機械、チェックポイント、時刻/子タスク/追加取得/資料変更の待機、リース回復、再試行、版付き成果物 |
 | 役割と記憶 | 永続化された役割、親より広がらない権限、役割別の記憶、FTS5と任意のローカル埋め込み、会話/作業の要約 |
 | 自動実行 | 定期実行・1回の時刻指定・イベント、重複排除・debounce、案件と変更からの調査候補、実行履歴と品質評価 |
@@ -75,6 +75,8 @@ PowerShellのExecutionPolicyや会社の制御は変更しません。Pythonバ�
 
 v0.3.2では、明るいサイドバー、白いパネル、角丸のボタン・入力欄・設定タブへ統一しています。日本語入力やキー操作にはTkの標準部品を使い、追加のUIライブラリは不要です。[デザイン方針と確認項目](docs/UI_DESIGN.md)を参照してください。
 
+v0.4.0ではClaudeに対応し、「接続・設定 → 2 AI接続」の「モデル一覧を取得」からAWSの対応モデルを選べます。選択するとモデルIDと接続先を設定し、保存後は再起動せず反映します。[モデル選択・利用状態・必要な権限](docs/BEDROCK_MODELS.md)を参照してください。
+
 `python -m work_assistant gui`でデスクトップアプリを開きます。未設定なら初期設定画面が表示されます。設定後、会話画面下部の複数行入力欄へ「案件Aについて、取得済み資料から次の確認事項を整理して」のように入力します。**Enterは改行、Ctrl+Enterまたは「送信」で送信**です。日本語の変換確定で送信しない設計です。
 
 - 会話の新規作成・切替・名前変更・検索・保管/復元。会話ごとの履歴・下書き・選択資料を復元します。
@@ -111,9 +113,11 @@ v0.3.2では、明るいサイドバー、白いパネル、角丸のボタン�
 
 クラウドから取得した情報は既定24時間で再確認が必要です。再確認フローがなければ期限後は利用を停止します。原文が失効/改訂した場合、以前の抽出候補や会話キャッシュも保守的に失効させます。これは完全なリアルタイム権限追従ではありません。
 
-### BedrockでGPTを使う
+### BedrockでOpenAI・Claudeを使う
 
 OpenAI本家のAPIキーや`api.openai.com`には接続しません。**OpenAI互換のResponses形式を、Bedrockエンドポイントに送信**します。
+
+ClaudeはBedrockのConverse / ConverseStreamへ自動で切り替えます。Claudeの接続先は `https://bedrock-runtime.<地域>.amazonaws.com`、モデルは対応する基本モデルIDまたは地域別・global推論プロファイルIDです。一覧から選ぶと両方が設定されます。会社の認証・モデル利用権限は事前に用意し、選択後に「保存して接続テスト」で確認してください。
 
 | 設定候補 | runtime | Mantle |
 |---|---|---|

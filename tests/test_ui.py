@@ -450,6 +450,84 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(str(choose["state"]), "disabled")
         self.assertTrue(any("資料はまだありません" in str(w.cget("text")) for w in dialog.winfo_children() if "text" in w.keys()))
 
+    def test_model_catalog_selects_claude_and_openai_without_saving_or_inference(self):
+        from work_assistant.model_catalog import ModelChoice, CatalogResult
+        from work_assistant.config import load
+        panel = self.restart_unconfigured()
+        before = (self.home / "config.json").read_bytes()
+        claude = ModelChoice("apac.anthropic.claude-sonnet-4-6", "Claude Sonnet", "converse", "推論プロファイル", ("ap-northeast-1", "ap-southeast-2"), "available")
+        openai = ModelChoice("global.openai.gpt-6-luna", "GPT Luna", "responses", "推論プロファイル", ("us-east-1",), "unknown")
+        with patch("work_assistant.ui_settings.list_models", return_value=CatalogResult([claude, openai], [])) as catalog, patch("work_assistant.ui_settings.probe_connection") as probe:
+            panel.catalog_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(catalog.call_count, 1); probe.assert_not_called()
+        self.assertEqual((self.home / "config.json").read_bytes(), before)
+        self.assertFalse(panel.dirty)
+        panel.tabs.select(1); self.settle(.05)
+        self.app.root.tk.call("ttk::combobox::Post", panel.model_combo)
+        self.settle(.05)
+        # Native dropdown focus has no corresponding Python widget. Repainting
+        # rounded controls while it is open must remain safe.
+        panel.catalog_button.configure(state="normal")
+        panel.save_button.paint(); self.settle(.05)
+        self.app.root.tk.call("ttk::combobox::Unpost", panel.model_combo)
+        panel.model_combo.current(0); panel.model_combo.event_generate("<<ComboboxSelected>>"); self.settle(.05)
+        self.assertEqual(panel.vars["model"].get(), claude.model)
+        self.assertEqual(panel.vars["endpoint"].get(), "https://bedrock-runtime.ap-northeast-1.amazonaws.com")
+        self.assertIn("ap-southeast-2", panel.catalog_label["text"])
+        self.assertTrue(panel.dirty); self.assertEqual(load(self.home).bedrock.model, openai.model)
+        self.permit_connection(panel)
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(load(self.home).bedrock.model, claude.model)
+        self.assertEqual(self.rt.agent.client.settings.model, claude.model)
+        panel.model_combo.current(1); panel.model_combo.event_generate("<<ComboboxSelected>>"); self.settle(.05)
+        self.assertEqual(panel.vars["endpoint"].get(), "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1")
+
+    def test_model_catalog_failure_empty_retry_and_auth_changes_do_not_leave_stale_choices(self):
+        from work_assistant.common import AssistantError
+        from work_assistant.model_catalog import ModelChoice, CatalogResult
+        panel = self.restart_unconfigured()
+        choice = ModelChoice("anthropic.claude-sonnet-4-6", "Claude", "converse", "リージョン内", ("ap-northeast-1",), "unknown")
+        with patch("work_assistant.ui_settings.list_models", side_effect=[AssistantError("BEDROCK_ACCESS_DENIED"), CatalogResult([], []), CatalogResult([choice], ["利用条件未確認"])]):
+            panel.catalog_button.invoke(); self.wait(lambda: not panel.busy)
+            self.assertEqual(str(panel.model_combo["state"]), "disabled")
+            self.assertIn("権限", panel.catalog_label["text"])
+            panel.catalog_button.invoke(); self.wait(lambda: not panel.busy)
+            self.assertIn("選択可能", panel.model_selection.get())
+            panel.catalog_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(str(panel.model_combo["state"]), "readonly")
+        panel.vars["profile"].set("another-profile")
+        self.assertFalse(panel.catalog_choices); self.assertEqual(str(panel.model_combo["state"]), "disabled")
+        panel.vars["model"].set(choice.model)
+        panel.vars["region"].set("us-east-1")
+        self.assertEqual(panel.vars["endpoint"].get(), "https://bedrock-runtime.us-east-1.amazonaws.com")
+
+    def test_slow_catalog_keeps_ui_responsive_blocks_duplicates_and_rejects_late_results(self):
+        from work_assistant.model_catalog import ModelChoice, CatalogResult
+        panel = self.restart_unconfigured(); entered, release = threading.Event(), threading.Event()
+        choice = ModelChoice("anthropic.claude-sonnet-4-6", "Claude", "converse", "リージョン内", ("ap-northeast-1",), "available")
+        def retrieve(_): entered.set(); release.wait(5); return CatalogResult([choice], [])
+        with patch("work_assistant.ui_settings.list_models", side_effect=retrieve) as catalog:
+            try:
+                panel.catalog_button.invoke(); self.wait(entered.is_set)
+                self.assertEqual(str(panel.fields["region"]["state"]), "disabled")
+                self.assertEqual(str(panel.save_button["state"]), "disabled")
+                panel.load_catalog(); self.app.show_page("documents"); self.settle(.05)
+                panel.vars["region"].set("us-east-1")
+            finally: release.set()
+            self.wait(lambda: not panel.busy)
+        self.assertEqual(catalog.call_count, 1); self.assertFalse(panel.catalog_choices)
+        self.assertIn("再取得", panel.status.get())
+
+    def test_manual_regional_claude_saves_without_cross_region_approval(self):
+        from work_assistant.config import load
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        panel.vars["cross_region_approved"].set(False)
+        panel.vars["model"].set("anthropic.claude-3-5-sonnet-20241022-v2:0")
+        self.assertEqual(panel.vars["endpoint"].get(), "https://bedrock-runtime.ap-northeast-1.amazonaws.com")
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertTrue(self.app.ready())
+        self.assertEqual(load(self.home).bedrock.model, panel.vars["model"].get())
+
     def test_import_without_folder_routes_to_setup_and_disallowed_file_is_not_imported(self):
         self.app.import_documents()
         self.assertEqual(self.app.current_page, "settings")

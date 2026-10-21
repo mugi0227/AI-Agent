@@ -1,4 +1,4 @@
-"""Bounded Responses tool loop with local, evidence-aware conversational context."""
+"""Bounded tool loop with local, evidence-aware conversational context."""
 from __future__ import annotations
 
 import json

@@ -1,7 +1,8 @@
-"""OpenAI Responses wire protocol on Bedrock only; API key or refreshable SigV4.
+"""Bedrock gateway: OpenAI Responses or Claude Converse; API key or SigV4.
 
 No OpenAI SDK default endpoint, remote tools, redirects, retry amplification or
-server-side response retention. Network is enabled only after local approval.
+server-side response retention. Inference requires explicit egress approval;
+model discovery reads metadata only after the user requests the catalog.
 """
 from __future__ import annotations
 
@@ -10,11 +11,13 @@ import os
 import ssl
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from typing import Callable
 
 from .common import AssistantError, canonical
 from .config import BedrockSettings
-from .security import validate_bedrock
+from .security import model_api, validate_bedrock
+from . import converse
 
 MAX_RESPONSE_BYTES = 8_000_000
 
@@ -56,9 +59,9 @@ class BedrockClient:
         self.settings = settings
         self._opener = opener  # Explicit injection for offline transport tests.
 
-    def _headers(self, url: str, body: bytes, service: str) -> dict:
+    def _headers(self, url: str, body: bytes | None, service: str, method="POST", accept="application/json") -> dict:
         cfg = self.settings
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream" if cfg.streaming else "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": accept}
         if cfg.auth == "api_key":
             key = os.environ.get(cfg.api_key_env, "")
             if not key or "\n" in key or "\r" in key:
@@ -75,7 +78,7 @@ class BedrockClient:
             if credentials is None:
                 raise AssistantError("AWS_CREDENTIALS_MISSING")
             frozen = credentials.get_frozen_credentials()  # Refresh SSO/temporary credentials per call.
-            request = AWSRequest(method="POST", url=url, data=body, headers=headers)
+            request = AWSRequest(method=method, url=url, data=body, headers=headers)
             SigV4Auth(frozen, service, cfg.region).add_auth(request)
             return dict(request.headers)
         except ImportError:
@@ -89,29 +92,52 @@ class BedrockClient:
                on_delta: Callable[[str], None] | None = None) -> dict:
         cfg = self.settings
         base, service = validate_bedrock(cfg)
+        api = model_api(cfg.model)
+        if api == "converse":
+            try:
+                payload = converse.request_payload(input_items, instructions, tools, cfg.max_output_tokens)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                raise AssistantError("MODEL_INPUT_INVALID") from None
+            suffix = "/converse-stream" if cfg.streaming else "/converse"
+            result = self._request(base + "/model/" + quote(cfg.model, safe="") + suffix, payload,
+                service=service, stream="converse" if cfg.streaming else None, on_delta=on_delta)
+            return validate_response(result if cfg.streaming else converse.normalize(result))
+        # A waiting job can be resumed after switching providers. Do not send
+        # Claude-only opaque content to Responses. Plain text and tools remain.
+        input_items = [i for i in input_items if not (i.get("type") == "reasoning" and "bedrock_content" in i)]
         payload = {"model": cfg.model, "input": input_items, "instructions": instructions,
                    "tools": tools, "store": False, "stream": cfg.streaming,
                    "max_output_tokens": cfg.max_output_tokens,
                    "reasoning": {"effort": cfg.reasoning_effort}, "parallel_tool_calls": False}
         if cfg.encrypted_reasoning:
             payload["include"] = ["reasoning.encrypted_content"]
-        body = canonical(payload).encode("utf-8")
-        url = base + "/responses"
-        headers = self._headers(url, body, service)
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        return validate_response(self._request(base + "/responses", payload, service=service,
+            stream="responses" if cfg.streaming else None, on_delta=on_delta))
+
+    def _request(self, url, payload=None, *, service="bedrock", method="POST", stream=None, on_delta=None, timeout=None):
+        cfg = self.settings
+        body = canonical(payload).encode("utf-8") if payload is not None else None
+        accept = "application/vnd.amazon.eventstream" if stream == "converse" else "text/event-stream" if stream == "responses" else "application/json"
+        headers = self._headers(url, body, service, method, accept)
+        request = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             context = ssl.create_default_context(cafile=cfg.ca_bundle or None)
             opener = self._opener or urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
-            with opener.open(request, timeout=cfg.timeout_seconds) as response:
+            with opener.open(request, timeout=timeout or cfg.timeout_seconds) as response:
                 content_type = response.headers.get("Content-Type", "")
-                if "text/event-stream" in content_type:
+                if stream == "converse":
+                    if "application/vnd.amazon.eventstream" not in content_type:
+                        raise AssistantError("MODEL_STREAM_INVALID")
+                    result = converse.read_stream(response, on_delta)
+                elif "text/event-stream" in content_type and stream == "responses":
                     result = self._read_stream(response, on_delta)
                 else:
                     data = response.read(MAX_RESPONSE_BYTES + 1)
                     if len(data) > MAX_RESPONSE_BYTES:
                         raise AssistantError("MODEL_RESPONSE_TOO_LARGE")
                     result = json.loads(data.decode("utf-8"))
-            return validate_response(result)
+            if not isinstance(result, dict): raise AssistantError("MODEL_RESPONSE_INVALID")
+            return result
         except urllib.error.HTTPError as error:
             # Never expose raw error body: providers may echo prompts or credentials.
             if error.code in (401, 403):
