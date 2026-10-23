@@ -30,4 +30,6 @@ captures/
 
 config.json
 native-launcher.json
+credentials/
+.settings.lock
 *.exe

@@ -373,6 +373,7 @@ class Desktop:
         cfg = self.rt.cfg
         if not cfg.local_data_approved: return False
         if not self.rt.agent.client.is_live: return True
+        if cfg.bedrock.auth == "access_keys" and not cfg.bedrock.credential_ref: return False
         try: validate_bedrock(cfg.bedrock)
         except AssistantError: return False
         return True
@@ -734,6 +735,7 @@ class Desktop:
 
     def close(self):
         if self.closed: return
+        self.settings_panel.clear_secret_inputs()
         self.save_draft(); self.controller.stop(); self.closed = True; self.rt.close()
         for job in self.root.tk.call("after", "info"): self.root.after_cancel(job)
         self.root.destroy()

@@ -16,6 +16,7 @@ from typing import Callable
 
 from .common import AssistantError, canonical
 from .config import BedrockSettings
+from .credentials import AccessKeys
 from .security import model_api, validate_bedrock
 from . import converse
 
@@ -55,9 +56,10 @@ def validate_response(response: dict) -> dict:
 class BedrockClient:
     is_live = True
 
-    def __init__(self, settings: BedrockSettings, opener=None):
+    def __init__(self, settings: BedrockSettings, opener=None, *, credential_store=None, credentials: AccessKeys | None = None):
         self.settings = settings
         self._opener = opener  # Explicit injection for offline transport tests.
+        self.credential_store, self.credentials = credential_store, credentials
 
     def _headers(self, url: str, body: bytes | None, service: str, method="POST", accept="application/json") -> dict:
         cfg = self.settings
@@ -69,15 +71,25 @@ class BedrockClient:
             headers["Authorization"] = "Bearer " + key
             return headers
         try:
-            import boto3
             from botocore.auth import SigV4Auth
             from botocore.awsrequest import AWSRequest
-            os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
-            session = boto3.Session(profile_name=cfg.profile or None, region_name=cfg.region)
-            credentials = session.get_credentials()
-            if credentials is None:
-                raise AssistantError("AWS_CREDENTIALS_MISSING")
-            frozen = credentials.get_frozen_credentials()  # Refresh SSO/temporary credentials per call.
+            if cfg.auth == "access_keys":
+                from botocore.credentials import Credentials
+                keys = self.credentials
+                if keys is None:
+                    if not cfg.credential_ref or self.credential_store is None: raise AssistantError("AWS_ACCESS_KEYS_MISSING")
+                    keys = self.credential_store.read(cfg.credential_ref)
+                keys.validate()
+                frozen = Credentials(keys.access_key_id, keys.secret_access_key, keys.session_token or None).get_frozen_credentials()
+            elif cfg.auth == "sigv4":
+                import boto3
+                os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+                session = boto3.Session(profile_name=cfg.profile or None, region_name=cfg.region)
+                credentials = session.get_credentials()
+                if credentials is None: raise AssistantError("AWS_CREDENTIALS_MISSING")
+                frozen = credentials.get_frozen_credentials()  # Refresh SSO/temporary credentials per call.
+            else:
+                raise AssistantError("CONFIG_AUTH")
             request = AWSRequest(method=method, url=url, data=body, headers=headers)
             SigV4Auth(frozen, service, cfg.region).add_auth(request)
             return dict(request.headers)

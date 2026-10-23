@@ -11,6 +11,7 @@ from pathlib import Path
 from .bedrock import BedrockClient, response_text
 from .common import AssistantError, canonical, digest
 from .config import Settings
+from .credentials import CredentialStore
 from .security import DENIED_PARTS, expanded, is_link_or_junction, validate_bedrock
 from .tools import function, string
 
@@ -58,7 +59,7 @@ def connection_fingerprint(cfg: Settings) -> str:
 def probe_connection(cfg: Settings, store, *, client=None) -> dict:
     """Two budgeted calls using only a random nonce and a local echo tool."""
     validate_bedrock(cfg.bedrock)
-    client = client or BedrockClient(cfg.bedrock)
+    client = client or BedrockClient(cfg.bedrock, credential_store=CredentialStore(store.path.parent))
     nonce = "probe-" + uuid.uuid4().hex[:12]
     schema = function("echo_probe", "Echo the exact nonce to validate function calling", {"nonce": string(100)})
     items = [{"role": "user", "content": "Call echo_probe with nonce=" + nonce + ". After receiving its result, reply only with that nonce."}]

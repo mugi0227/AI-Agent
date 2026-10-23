@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -19,6 +20,7 @@ class BedrockSettings:
     model: str = "global.openai.gpt-6-luna"
     auth: str = "sigv4"
     profile: str = ""
+    credential_ref: str = ""
     api_key_env: str = "AWS_BEARER_TOKEN_BEDROCK"
     reasoning_effort: str = "medium"
     encrypted_reasoning: bool = True
@@ -109,14 +111,16 @@ class Settings:
         if not isinstance(self.memory_embedding_model, str) or len(self.memory_embedding_model) > 4000:
             raise AssistantError("CONFIG_STRING")
         b = self.bedrock
-        for name in ("endpoint", "region", "model", "auth", "profile", "api_key_env", "reasoning_effort", "ca_bundle"):
+        for name in ("endpoint", "region", "model", "auth", "profile", "credential_ref", "api_key_env", "reasoning_effort", "ca_bundle"):
             if not isinstance(getattr(b, name), str) or len(getattr(b, name)) > 4000:
                 raise AssistantError("CONFIG_STRING")
         for name in ("enabled", "data_transfer_approved", "cross_region_approved", "encrypted_reasoning", "streaming"):
             if type(getattr(b, name)) is not bool:
                 raise AssistantError("CONFIG_BOOLEAN")
-        if b.auth not in ("sigv4", "api_key"):
+        if b.auth not in ("sigv4", "api_key", "access_keys"):
             raise AssistantError("CONFIG_AUTH")
+        if b.credential_ref and not re.fullmatch(r"[0-9a-f]{32}", b.credential_ref):
+            raise AssistantError("CREDENTIAL_REFERENCE_INVALID")
         for name, low, high in (("timeout_seconds", 5, 120), ("max_output_tokens", 128, 16000),
                                 ("daily_calls", 1, 10000), ("daily_tokens", 1000, 10_000_000)):
             v = getattr(b, name)

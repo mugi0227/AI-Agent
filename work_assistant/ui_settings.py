@@ -10,12 +10,14 @@ from tkinter import ttk, filedialog
 from .chat import error_help
 from .common import AssistantError, safe_code, stamp
 from .config import minute_of_day
+from .bedrock import BedrockClient
+from .credentials import AccessKeys
 from .security import expanded, model_api, validate_bedrock
 from .model_catalog import list_models
 from .setup_flow import SetupError, connection_fingerprint, probe_connection, validate_setup
 from .ui_widgets import BG, WHITE, INK, MUTED, ACCENT, LINE, SOFT, ERROR, ScrollFrame, RoundedPanel, button, entry, label
 
-AUTH_NAMES = {"sigv4": "AWSプロファイル・SSO", "api_key": "環境変数のBedrock APIキー"}
+AUTH_NAMES = {"sigv4": "AWSプロファイル・SSO", "access_keys": "Access Key・Secret Access Key", "api_key": "環境変数のBedrock APIキー"}
 
 
 class SettingsPanel:
@@ -29,6 +31,10 @@ class SettingsPanel:
         self.catalog_choices = []
         self.catalog_context = None
         self.catalog_loading = False
+        self.secret_vars = {}
+        self.secret_revision = 0
+        self.clearing_secrets = self.delete_credentials = False
+        self.cleanup_pending = self.rt.credentials.has_retired(self.base.bedrock.credential_ref)
         self.vars, self.fields, self.field_tabs = {}, {}, {}
         self.inputs, self.buttons = [], []
         self.status = tk.StringVar(value="設定は保存後すぐに反映されます。定期実行は任意です。")
@@ -115,6 +121,23 @@ class SettingsPanel:
         auth.pack(fill="x", pady=(5, 12)); self.inputs.append(auth)
         self.field(1, "profile", "AWSプロファイル名", cfg.profile, "AWSプロファイル・SSO方式で使用。空欄は既定の認証設定を使用します。SSOは会社の手順で事前にログインしてください。")
         self.field(1, "api_key_env", "APIキーの環境変数名", cfg.api_key_env, "APIキー方式で使用。キー本体は入力しません。会社の手順で登録した環境変数名を指定します。")
+        self.key_frame = tk.Frame(parent, bg=WHITE)
+        self.key_status = label(self.key_frame, "", fg=MUTED, size=9, bg=WHITE, wraplength=620, justify="left")
+        self.key_status.pack(fill="x", pady=(0, 10))
+        for name, title in (("access_key_id", "Access Key ID"), ("secret_access_key", "Secret Access Key"), ("session_token", "Session Token（一時認証の場合）")):
+            row = tk.Frame(self.key_frame, bg=WHITE); row.pack(fill="x", pady=(0, 10))
+            label(row, title, bold=True, bg=WHITE).pack(anchor="w")
+            var = tk.StringVar(value=""); self.secret_vars[name] = var
+            widget = entry(row, var, show="●", exportselection=False); widget.pack(fill="x", ipady=7, pady=(4, 0))
+            var.trace_add("write", self.secret_changed)
+            self.fields[name], self.field_tabs[name] = widget, 1; self.inputs.append(widget)
+        bar = tk.Frame(self.key_frame, bg=WHITE); bar.pack(fill="x", pady=(0, 12))
+        self.show_keys = tk.BooleanVar(value=False)
+        show = tk.Checkbutton(bar, text="入力値を表示", variable=self.show_keys, command=self.toggle_keys,
+            bg=WHITE, fg=INK, activebackground=WHITE, selectcolor=WHITE, highlightthickness=0, font=(self.app.root.ui_font, 10))
+        show.pack(side="left"); self.inputs.append(show)
+        self.remove_keys = button(bar, "保存済みキーを削除", self.mark_delete_credentials)
+        self.remove_keys.pack(side="right"); self.buttons.append(self.remove_keys)
         model_bar = tk.Frame(parent, bg=WHITE); model_bar.pack(fill="x", pady=(4, 6)); self.model_bar = model_bar
         label(model_bar, "利用するモデル", bold=True, bg=WHITE).pack(side="left")
         self.catalog_button = button(model_bar, "モデル一覧を取得", self.load_catalog)
@@ -155,11 +178,57 @@ class SettingsPanel:
         button(parent, "次へ：接続確認", lambda: self.tabs.select(2)).pack(anchor="e", pady=10)
 
     def auth_changed(self, *_):
-        is_profile = self.vars["auth"].get() == AUTH_NAMES["sigv4"]
-        for name, visible in (("profile", is_profile), ("api_key_env", not is_profile)):
+        auth = self.vars["auth"].get()
+        for name, visible in (("profile", auth == AUTH_NAMES["sigv4"]), ("api_key_env", auth == AUTH_NAMES["api_key"])):
             row = self.fields[name].field_row
             if visible: row.pack(fill="x", pady=(0, 12), before=self.model_bar)
             else: row.pack_forget()
+        if auth == AUTH_NAMES["access_keys"]: self.key_frame.pack(fill="x", before=self.model_bar)
+        else: self.key_frame.pack_forget()
+        self.show_keys.set(False); self.toggle_keys(); self.refresh_key_status()
+
+    def toggle_keys(self):
+        for name in self.secret_vars: self.fields[name].configure(show="" if self.show_keys.get() else "●")
+
+    def secret_changed(self, *_):
+        if self.clearing_secrets: return
+        self.secret_revision += 1; self.delete_credentials = False
+        self.changed(); self.invalidate_catalog(); self.refresh_key_status()
+
+    def clear_secret_inputs(self):
+        self.clearing_secrets = True
+        try:
+            for var in self.secret_vars.values(): var.set("")
+            self.show_keys.set(False); self.toggle_keys()
+        finally: self.clearing_secrets = False
+
+    def refresh_key_status(self):
+        if self.delete_credentials: text = "保存済みキーは、次の「設定を保存」で削除します。"
+        elif self.cleanup_pending: text = "古い暗号化キーの削除が未完了です。「設定を保存」で削除を再試行できます。"
+        elif self.base.bedrock.credential_ref: text = "キーは保存済みです。空欄のまま使用できます。更新するときはAccess Key IDとSecret Access Keyを両方入力してください。"
+        else: text = "Access Key IDとSecret Access Keyを入力してください。一時認証ではSession Tokenも必要です。"
+        self.key_status.configure(text=text + " 保存にはWindowsのユーザー別暗号化を使用し、保存後は入力欄を消去します。")
+        self.remove_keys.configure(state="normal" if not self.busy and self.base.bedrock.credential_ref and not self.delete_credentials else "disabled")
+
+    def mark_delete_credentials(self):
+        if self.busy: return
+        self.clear_secret_inputs(); self.delete_credentials = True; self.secret_revision += 1
+        self.changed(); self.invalidate_catalog(); self.refresh_key_status()
+
+    def collect_credentials(self, *, allow_cleanup=False):
+        if self.vars["auth"].get() != AUTH_NAMES["access_keys"]: return None
+        values = [v.get() for v in self.secret_vars.values()]
+        if not any(values):
+            if not self.base.bedrock.credential_ref or self.delete_credentials:
+                if allow_cleanup and self.cleanup_pending: return None
+                raise SetupError("access_key_id", "Access Key IDとSecret Access Keyを入力してください。")
+            return None
+        keys = AccessKeys(*(self.secret_vars[n].get() for n in ("access_key_id", "secret_access_key", "session_token")))
+        try: keys.validate()
+        except AssistantError as error:
+            field = "access_key_id" if "ID_INVALID" in error.code else "secret_access_key" if "SECRET" in error.code else "session_token"
+            raise SetupError(field, error_help(error.code)[1]) from None
+        return keys
 
     def region_changed(self, *_):
         value = self.vars["region"].get().strip(); endpoint = self.vars["endpoint"]
@@ -180,7 +249,7 @@ class SettingsPanel:
             if endpoint.get() != target: endpoint.set(target)
 
     def catalog_key(self):
-        return tuple(self.vars[n].get().strip() for n in ("region", "auth", "profile", "api_key_env", "ca_bundle"))
+        return tuple(self.vars[n].get().strip() for n in ("region", "auth", "profile", "api_key_env", "ca_bundle")) + (str(self.secret_revision),)
 
     def invalidate_catalog(self, *_):
         if self.catalog_context is not None and self.catalog_key() != self.catalog_context:
@@ -194,12 +263,16 @@ class SettingsPanel:
         for name in ("region", "profile", "api_key_env", "ca_bundle"):
             setattr(cfg, name, self.vars[name].get().strip())
         cfg.auth = next((k for k, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
+        try: keys = self.collect_credentials()
+        except SetupError as error:
+            self.show_error(error.message, error.field); return
+        client = BedrockClient(cfg, credential_store=self.rt.credentials, credentials=keys) if cfg.auth == "access_keys" else None
         key = self.catalog_key()
         self.busy = self.catalog_loading = True; self.set_busy()
         self.catalog_label.configure(text="AWSから対応モデルと利用条件を取得しています…", fg=ACCENT)
         self.status.set("モデル一覧を取得しています。入力内容は保存しません。")
         def work():
-            try: self.catalog_events.put((key, list_models(cfg), None))
+            try: self.catalog_events.put((key, list_models(cfg, client=client) if client else list_models(cfg), None))
             except Exception as error: self.catalog_events.put((key, None, safe_code(error)))
         threading.Thread(target=work, daemon=True, name="assistant-model-catalog").start()
 
@@ -286,6 +359,7 @@ class SettingsPanel:
         for name in ("enabled", "data_transfer_approved", "cross_region_approved", "region", "model", "profile", "api_key_env", "endpoint", "ca_bundle"):
             value = self.vars[name].get(); setattr(cfg.bedrock, name, value.strip() if isinstance(value, str) else value)
         cfg.bedrock.auth = next((key for key, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
+        if self.delete_credentials: cfg.bedrock.credential_ref = ""
         choice = next((c for c in self.catalog_choices if c.model == cfg.bedrock.model), None)
         # Use AWS's streaming capability signal without changing the saved base
         # settings during discovery. Manual IDs keep the current preference.
@@ -314,7 +388,10 @@ class SettingsPanel:
         if self.busy: return
         try:
             candidate = self.collect()
+            keys = self.collect_credentials(allow_cleanup=True) if not self.delete_credentials else None
             if test:
+                if candidate.bedrock.auth == "access_keys" and keys is None and not candidate.bedrock.credential_ref:
+                    raise SetupError("access_key_id", "Access Key IDとSecret Access Keyを入力してください。")
                 if not candidate.local_data_approved:
                     raise SetupError("local_data_approved", "会話と資料のローカル保存の許可を確認してください。")
                 try: validate_bedrock(candidate.bedrock)
@@ -328,23 +405,25 @@ class SettingsPanel:
         self.busy = True; self.status_label.configure(fg=ACCENT)
         self.status.set("設定を保存しています…" if not test else "設定を保存し、テスト用の入力でAI接続を確認しています…")
         self.set_busy()
+        clear_credentials = self.delete_credentials
         def work():
-            saved = False
+            saved, cleanup_ok = False, True
             try:
-                self.rt.configure(candidate); saved = True
+                cleanup_ok = self.rt.configure(candidate, credentials=keys, clear_credentials=clear_credentials)
+                candidate_saved = copy.deepcopy(self.rt.cfg); saved = True
                 if test:
                     with self.rt.operation():
-                        probe_connection(candidate, self.rt.store)
-                    self.rt.store.set_state("ui.connection_probe", {"fingerprint": connection_fingerprint(candidate), "status": "success", "at": stamp()})
-                self.events.put((candidate, saved, test, None))
+                        probe_connection(candidate_saved, self.rt.store)
+                    self.rt.store.set_state("ui.connection_probe", {"fingerprint": connection_fingerprint(candidate_saved), "status": "success", "at": stamp()})
+                self.events.put((candidate_saved, saved, test, None, cleanup_ok))
             except Exception as error:
                 code = safe_code(error)
                 if saved and test:
                     try:
-                        self.rt.store.set_state("ui.connection_probe", {"fingerprint": connection_fingerprint(candidate), "status": "failed", "code": code, "at": stamp()})
+                        self.rt.store.set_state("ui.connection_probe", {"fingerprint": connection_fingerprint(candidate_saved), "status": "failed", "code": code, "at": stamp()})
                     except Exception:
                         pass  # Still return the failure so the UI always releases its busy state.
-                self.events.put((candidate, saved, test, (code, error.message if isinstance(error, SetupError) else "", getattr(error, "field", None))))
+                self.events.put((candidate_saved if saved else candidate, saved, test, (code, error.message if isinstance(error, SetupError) else "", getattr(error, "field", None)), cleanup_ok))
         threading.Thread(target=work, daemon=True, name="assistant-setup").start()
 
     def set_busy(self):
@@ -352,14 +431,20 @@ class SettingsPanel:
             state = "disabled" if self.busy else "readonly" if isinstance(widget, ttk.Combobox) else "normal"
             widget.configure(state=state)
         self.model_combo.configure(state="readonly" if self.catalog_choices and not self.busy else "disabled")
+        self.refresh_key_status()
         self.chat_button.configure(state="normal" if not self.busy and not self.dirty and self.app.ready() else "disabled")
 
     def pump(self):
         self.pump_catalog()
-        try: candidate, saved, test, error = self.events.get_nowait()
+        try: candidate, saved, test, error, cleanup_ok = self.events.get_nowait()
         except queue.Empty: return
         self.busy = False
-        if saved: self.base = candidate; self.dirty = False
+        if saved:
+            self.cleanup_pending = cleanup_ok is False
+            sensitive_changed = candidate.bedrock.credential_ref != self.base.bedrock.credential_ref or self.delete_credentials or any(v.get() for v in self.secret_vars.values())
+            self.base = candidate; self.dirty = False; self.delete_credentials = False
+            self.clear_secret_inputs()
+            if sensitive_changed: self.secret_revision += 1; self.invalidate_catalog()
         if saved and test:
             self.probe_override = {"fingerprint": connection_fingerprint(candidate), "status": "failed" if error else "success", "at": stamp()}
         self.set_busy(); self.refresh()
@@ -367,7 +452,8 @@ class SettingsPanel:
             code, message, field = error
             title, help_text = error_help(code)
             if code == "SETTINGS_BUSY": help_text = "回答・資料の取り込み・継続タスクの処理が終わってから、もう一度保存してください。入力内容は保持しています。"
-            elif not saved and not message: help_text = "設定を保存できませんでした。保存先の空き容量と書き込み権限を確認して再試行してください。入力内容と元の設定は保持しています。"
+            elif not saved and not message and code not in ("SETTINGS_CHANGED", "CREDENTIAL_PATH_INVALID", "CREDENTIAL_STORAGE_UNSUPPORTED", "CREDENTIAL_STORE_FAILED", "AWS_ACCESS_KEY_ID_INVALID", "AWS_SECRET_ACCESS_KEY_INVALID", "AWS_SESSION_TOKEN_REQUIRED", "AWS_SESSION_TOKEN_INVALID"):
+                help_text = "設定を保存できませんでした。保存先の空き容量と書き込み権限を確認して再試行してください。入力内容と元の設定は保持しています。"
             self.show_error(message or (title + "。" + help_text), field)
         elif test:
             self.tabs.select(2); self.status.set("接続テストに成功しました。「質問画面へ」から質問できます。")
@@ -375,6 +461,9 @@ class SettingsPanel:
         else:
             suffix = "「質問画面へ」から質問できます。" if self.app.ready() else "次に「AI接続」で必要な項目を設定してください。"
             self.status.set("設定を保存して反映しました。" + suffix); self.status_label.configure(fg=ACCENT)
+        if cleanup_ok is False:
+            self.status.set(self.status.get() + " 古い暗号化キーの削除に失敗しました。保存先の権限を確認し、再度保存してください。")
+            self.status_label.configure(fg=ERROR)
         self.app.diagnostic_report = None
         self.app.info_view.pack_forget()
         self.app.refresh(schedule=False)

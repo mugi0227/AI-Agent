@@ -50,6 +50,7 @@
     "region": "ap-northeast-1",
     "model": "global.openai.gpt-6-luna",
     "auth": "sigv4",
+    "credential_ref": "",
     "profile": "",
     "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
     "reasoning_effort": "medium",

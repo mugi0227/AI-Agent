@@ -50,7 +50,7 @@ def list_models(cfg, *, client=None, clock=time.monotonic):
     control endpoint. The client exposes no arbitrary URL to the desktop form.
     """
     if not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d", cfg.region): raise AssistantError("BEDROCK_REGION_INVALID")
-    if cfg.auth not in ("sigv4", "api_key"): raise AssistantError("CONFIG_AUTH")
+    if cfg.auth not in ("sigv4", "api_key", "access_keys"): raise AssistantError("CONFIG_AUTH")
     client = client or BedrockClient(cfg)
     base = f"https://bedrock.{cfg.region}.amazonaws.com"
     deadline = clock() + 60

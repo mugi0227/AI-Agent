@@ -13,6 +13,7 @@ from .bedrock import BedrockClient
 from .bridge import Bridge
 from .common import AssistantError, safe_code, atomic_json
 from .config import Settings, load
+from .credentials import AccessKeys, CredentialStore
 from .ingest import Ingestor
 from .scheduler import Scheduler
 from .store import Store
@@ -22,11 +23,12 @@ from .execution import WorkRunner, CombinedCancel, ForegroundLease
 class Runtime:
     def __init__(self, home: Path, cfg: Settings | None = None, client=None):
         self.home, self.cfg = home, cfg or load(home)
+        self.credentials = CredentialStore(home)
         self.store = Store(home / "assistant.sqlite3")
         self.store.recover_interrupted()
         self.ingestor = Ingestor(self.store, self.cfg, home)
         self.bridge = Bridge(self.store, self.cfg, self.ingestor)
-        self.agent = Agent(self.store, self.cfg, self.ingestor, self.bridge, client or BedrockClient(self.cfg.bedrock))
+        self.agent = Agent(self.store, self.cfg, self.ingestor, self.bridge, client or BedrockClient(self.cfg.bedrock, credential_store=self.credentials))
         self.work = self.agent.state
         self.work_runner = WorkRunner(self.work, self.cfg, self.agent)
         self.scheduler = Scheduler(self.store, self.cfg, self.agent)
@@ -54,25 +56,40 @@ class Runtime:
             with self._settings_lock:
                 self._active_operations -= 1
 
-    def configure(self, settings: Settings) -> None:
+    def configure(self, settings: Settings, *, credentials: AccessKeys | None = None, clear_credentials=False) -> bool:
         from .setup_flow import validate_setup
         candidate = copy.deepcopy(settings)
+        staged, committed = None, False
         with self._settings_lock:
             if self._active_operations or self._settings_changing or self.stop_event.is_set():
                 raise AssistantError("SETTINGS_BUSY")
             self._settings_changing = True
         try:
-            validate_setup(candidate, self.home)
-            atomic_json(self.home / "config.json", asdict(candidate))
-            # Keep object identities: all runtime components share these references.
-            # No active operation can observe a partially applied configuration.
-            for item in fields(candidate.bedrock):
-                setattr(self.cfg.bedrock, item.name, copy.deepcopy(getattr(candidate.bedrock, item.name)))
-            for item in fields(candidate):
-                if item.name != "bedrock":
-                    setattr(self.cfg, item.name, copy.deepcopy(getattr(candidate, item.name)))
-            self.wake.set()
+            with self.credentials.settings_lock():
+                if load(self.home).bedrock.credential_ref != self.cfg.bedrock.credential_ref:
+                    raise AssistantError("SETTINGS_CHANGED")
+                if credentials is not None and (candidate.bedrock.auth != "access_keys" or clear_credentials):
+                    raise AssistantError("CONFIG_AUTH")
+                if clear_credentials: candidate.bedrock.credential_ref = ""
+                validate_setup(candidate, self.home)
+                if credentials is not None:
+                    staged = self.credentials.save(credentials)
+                    candidate.bedrock.credential_ref = staged
+                atomic_json(self.home / "config.json", asdict(candidate))
+                committed = True
+                # Preserve shared identities; active work cannot observe a
+                # partially applied configuration or credentials reference.
+                for item in fields(candidate.bedrock):
+                    setattr(self.cfg.bedrock, item.name, copy.deepcopy(getattr(candidate.bedrock, item.name)))
+                for item in fields(candidate):
+                    if item.name != "bedrock":
+                        setattr(self.cfg, item.name, copy.deepcopy(getattr(candidate, item.name)))
+                self.wake.set()
+                return self.credentials.prune(keep=candidate.bedrock.credential_ref)
         finally:
+            if staged and not committed:
+                try: self.credentials.delete(staged)
+                except AssistantError: pass  # Retry orphan cleanup on the next successful save.
             with self._settings_lock:
                 self._settings_changing = False
 

@@ -51,9 +51,11 @@ TXT/MD/CSV/HTML/EML/VTT/DOCX/PPTX/XLSXそれぞれ架空資料を用意して取
 
 FAIL時: 拡張子・エンコーディング・ファイル実体・許可ルート・サイズを切り分ける。スキャンの安定判定やWindows reparse判定が誤っていれば、実測に基づいて限定的に修正しテスト追加。hydrate_cloud_filesを勝手にtrueにしない。暗号化/ダウンロード禁止資料は未対応またはBLOCKED_POLICY。
 
-## 3. BedrockのGPT接続を白黒判定
+## 3. BedrockのOpenAI・Claude接続を判定
 
 承認されたAWS接続方法を確認する。SigV4ならboto3/botocoreを承認経路で導入し、既存のAWSプロファイル/SSOを使用する。APIキー方式ならBedrock用環境変数を使用するがキーは表示しない。
+
+Access Key方式はGUIの「AI接続」で本人に入力してもらう。値をCodexへ貼るよう求めたりログに出したりせず、Windows DPAPIによる保存と合成接続テストを確認する。一時認証はSession Tokenも必要。`docs/ACCESS_KEYS.md`と`docs/BEDROCK_MODELS.md`に従い、モデル一覧から選択する。ClaudeはConverse、OpenAIはResponsesへ振り分けられるため、ClaudeへResponses固有の設定を送らない。
 
 既定候補はTokyo `bedrock-runtime`、`/openai/v1`、`global.openai.gpt-6-luna`。東京エンドポイントでも国内処理限定ではない。**実際に承認されたモデル/推論プロファイル/地域を確認するまで有効化しない。** Mantleを選ぶ場合もモデルカードに従って`/openai/v1`とモデルID・地域を確認する。
 

@@ -450,6 +450,122 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(str(choose["state"]), "disabled")
         self.assertTrue(any("資料はまだありません" in str(w.cget("text")) for w in dialog.winfo_children() if "text" in w.keys()))
 
+    def access_key_panel(self):
+        from test_credentials import MemoryProtector
+        from work_assistant.ui_settings import AUTH_NAMES
+        panel = self.restart_unconfigured(); self.permit_connection(panel)
+        self.rt.credentials.protector = MemoryProtector()
+        panel.vars["auth"].set(AUTH_NAMES["access_keys"])
+        return panel
+
+    def fill_keys(self, panel, material):
+        for name in panel.secret_vars: panel.secret_vars[name].set(getattr(material, name))
+
+    def test_access_keys_catalog_is_ephemeral_then_save_and_probe_use_only_reference(self):
+        from test_credentials import keys
+        from work_assistant.model_catalog import CatalogResult, ModelChoice
+        from work_assistant.config import load
+        panel = self.access_key_panel(); material = keys(temporary=True)
+        self.fill_keys(panel, material)
+        for name in panel.secret_vars:
+            self.assertEqual(panel.fields[name].cget("show"), "●")
+            self.assertNotIn(name, panel.vars)
+        before = (self.home / "config.json").read_bytes()
+        choice = ModelChoice("apac.anthropic.claude-sonnet-4-6", "Claude", "converse", "推論プロファイル", ("ap-northeast-1",), "available")
+        with patch("work_assistant.ui_settings.list_models", return_value=CatalogResult([choice], [])) as catalog:
+            panel.load_catalog(); self.wait(lambda: not panel.busy)
+        client = catalog.call_args.kwargs["client"]
+        self.assertEqual(client.credentials, material)
+        self.assertEqual(catalog.call_args.args[0].auth, "access_keys")
+        self.assertEqual((self.home / "config.json").read_bytes(), before)
+        self.assertFalse((self.home / "credentials").exists())
+        material = keys("B", temporary=True); self.fill_keys(panel, material)
+        self.assertFalse(panel.catalog_choices); self.assertEqual(str(panel.model_combo["state"]), "disabled")
+        with patch("work_assistant.ui_settings.list_models", return_value=CatalogResult([choice], [])):
+            panel.load_catalog(); self.wait(lambda: not panel.busy)
+        panel.model_combo.current(0); panel.select_model()
+        def probe(cfg, _):
+            self.assertTrue(cfg.bedrock.credential_ref)
+            self.assertEqual(self.rt.credentials.read(cfg.bedrock.credential_ref), material)
+            return {}
+        with patch("work_assistant.ui_settings.probe_connection", side_effect=probe):
+            panel.test_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertIn("成功", panel.status.get()); self.assertTrue(self.app.ready())
+        self.assertEqual(load(self.home).bedrock.auth, "access_keys")
+        self.assertEqual(panel.base.bedrock.credential_ref, load(self.home).bedrock.credential_ref)
+        self.assertTrue(all(v.get() == "" for v in panel.secret_vars.values()))
+        self.assertFalse(panel.dirty); self.assertIn("保存済み", panel.key_status["text"])
+        for path in self.home.rglob("*"):
+            if path.is_file():
+                for value in (material.access_key_id, material.secret_access_key, material.session_token):
+                    self.assertNotIn(value.encode(), path.read_bytes())
+
+    def test_access_keys_failed_save_preserves_inputs_and_old_key_then_rotation_retries(self):
+        from test_credentials import keys
+        panel = self.access_key_panel(); self.fill_keys(panel, keys())
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        old = self.rt.cfg.bedrock.credential_ref
+        self.fill_keys(panel, keys("B"))
+        with patch("work_assistant.runtime.atomic_json", side_effect=OSError("synthetic write failure")):
+            panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(self.rt.cfg.bedrock.credential_ref, old)
+        self.assertEqual(self.rt.credentials.read(old), keys())
+        self.assertEqual(panel.secret_vars["secret_access_key"].get(), keys("B").secret_access_key)
+        self.assertIn("書き込み権限", panel.status.get())
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertNotEqual(self.rt.cfg.bedrock.credential_ref, old)
+        self.assertEqual(self.rt.credentials.read(self.rt.cfg.bedrock.credential_ref), keys("B"))
+        self.assertEqual(len(list((self.home / "credentials").glob("*.bin"))), 1)
+        self.assertFalse(any(v.get() for v in panel.secret_vars.values()))
+
+    def test_access_key_partial_input_and_missing_session_token_never_start_network(self):
+        from test_credentials import keys
+        panel = self.access_key_panel()
+        with patch("work_assistant.ui_settings.list_models") as catalog, patch("work_assistant.ui_settings.probe_connection") as probe:
+            panel.secret_vars["access_key_id"].set(keys().access_key_id)
+            panel.catalog_button.invoke(); self.settle(.05)
+            self.assertIn("Secret Access Key", panel.status.get())
+            self.fill_keys(panel, keys(temporary=True)); panel.secret_vars["session_token"].set("")
+            panel.test_button.invoke(); self.settle(.05)
+            self.assertIn("Session Token", panel.status.get())
+        catalog.assert_not_called(); probe.assert_not_called()
+        self.assertFalse(panel.busy); self.assertEqual(self.rt.cfg.bedrock.credential_ref, "")
+
+    def test_access_key_delete_is_staged_until_save_and_disables_live_connection(self):
+        from test_credentials import keys
+        panel = self.access_key_panel(); self.fill_keys(panel, keys())
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        ref = self.rt.cfg.bedrock.credential_ref; self.assertTrue(self.app.ready())
+        panel.remove_keys.invoke(); self.settle(.05)
+        self.assertEqual(self.rt.credentials.read(ref), keys())
+        self.assertIn("削除", panel.key_status["text"])
+        with patch("work_assistant.ui_settings.probe_connection") as probe:
+            panel.test_button.invoke(); self.settle(.05)
+        probe.assert_not_called(); self.assertEqual(self.rt.cfg.bedrock.credential_ref, ref)
+        from work_assistant.common import AssistantError
+        with patch.object(self.rt.credentials, "delete", side_effect=AssistantError("CREDENTIAL_DELETE_FAILED")):
+            panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertTrue(panel.cleanup_pending); self.assertIn("削除に失敗", panel.status.get())
+        self.assertFalse(self.app.ready()); self.assertEqual(self.rt.cfg.bedrock.credential_ref, "")
+        panel = self.restart_unconfigured(); self.assertTrue(panel.cleanup_pending)
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertFalse(panel.cleanup_pending)
+        self.assertFalse(list((self.home / "credentials").glob("*.bin")))
+
+    def test_unused_key_inputs_are_not_saved_by_profile_auth_and_are_remasked_on_switch(self):
+        from test_credentials import keys
+        from work_assistant.ui_settings import AUTH_NAMES
+        panel = self.access_key_panel(); self.fill_keys(panel, keys())
+        panel.show_keys.set(True); panel.toggle_keys()
+        self.assertEqual(panel.fields["secret_access_key"].cget("show"), "")
+        panel.vars["auth"].set(AUTH_NAMES["sigv4"])
+        self.assertEqual(panel.fields["secret_access_key"].cget("show"), "●")
+        self.assertEqual(panel.key_frame.winfo_manager(), "")
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(self.rt.cfg.bedrock.auth, "sigv4")
+        self.assertFalse((self.home / "credentials").exists())
+        self.assertFalse(any(v.get() for v in panel.secret_vars.values()))
+
     def test_model_catalog_selects_claude_and_openai_without_saving_or_inference(self):
         from work_assistant.model_catalog import ModelChoice, CatalogResult
         from work_assistant.config import load

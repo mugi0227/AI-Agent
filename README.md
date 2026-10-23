@@ -79,6 +79,8 @@ v0.4.0ではClaudeに対応し、「接続・設定 → 2 AI接続」の「モ�
 
 v0.4.1では白と水色を基調に、主ボタンとロゴの控えめな光沢、濃い青の文字、淡い青の選択表示へ統一しました。会話・設定・実行管理・各ダイアログに同じ配色を使用します。
 
+v0.5.0では「AI接続」でAccess Key ID・Secret Access Key・任意のSession Tokenを直接入力できます。Windowsで暗号化保存し、モデル一覧取得と接続テストに使用します。[入力・更新・削除](docs/ACCESS_KEYS.md)を参照してください。
+
 `python -m work_assistant gui`でデスクトップアプリを開きます。未設定なら初期設定画面が表示されます。設定後、会話画面下部の複数行入力欄へ「案件Aについて、取得済み資料から次の確認事項を整理して」のように入力します。**Enterは改行、Ctrl+Enterまたは「送信」で送信**です。日本語の変換確定で送信しない設計です。
 
 - 会話の新規作成・切替・名前変更・検索・保管/復元。会話ごとの履歴・下書き・選択資料を復元します。
@@ -129,7 +131,7 @@ ClaudeはBedrockのConverse / ConverseStreamへ自動で切り替えます。Cla
 
 上記は2026-10-16のAWSモデルカードを基にした候補で、会社アカウントでの提供・権限を保証しません。設定が合わない場合でも、別モデル/地域/プロバイダーに自動切替しません。
 
-SigV4は承認されたAWSプロファイル/SSOと追加のboto3を利用。APIキー方式は`auth: "api_key"`、キーは`AWS_BEARER_TOKEN_BEDROCK`等の指定環境変数へ。秘密値をconfig.jsonやリポジトリへ書かないでください。すべてのResponses呼び出しで`store:false`を明示しますが、会社/AWS側の別の監査ログ設定を無効にする意味ではありません。
+SigV4は既存のAWSプロファイル/SSO、または画面で入力したAccess Key・Secret Access Keyを使用し、追加のboto3/botocoreが必要です。直接入力したキーはWindowsで暗号化保存します。Bedrock APIキー方式は`auth: "api_key"`、キーは`AWS_BEARER_TOKEN_BEDROCK`等の指定環境変数へ。秘密値をconfig.jsonやリポジトリへ書かないでください。すべてのResponses呼び出しで`store:false`を明示しますが、会社/AWS側の別の監査ログ設定を無効にする意味ではありません。
 
 ```powershell
 # 追加依存は社内承認のある場合だけ
