@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, parse_qsl, quote
 from work_assistant.bedrock import BedrockClient
 from work_assistant.common import AssistantError, canonical
 from work_assistant.config import BedrockSettings, Settings, initialize, load
-from work_assistant.credentials import AccessKeys, CredentialStore, WindowsProtector
+from work_assistant.credentials import AccessKeys, CredentialStore, WindowsProtector, secret_input_feedback
 from work_assistant.runtime import Runtime
 from work_assistant.setup_flow import connection_fingerprint
 
@@ -142,12 +142,34 @@ class CredentialTests(unittest.TestCase):
 
     def test_key_and_session_token_validation_never_echoes_input(self):
         cases = [(AccessKeys("bad-secret-canary", "A" * 40), "AWS_ACCESS_KEY_ID_INVALID"),
-                 (AccessKeys(keys().access_key_id, "bad-secret-canary"), "AWS_SECRET_ACCESS_KEY_INVALID"),
+                 (AccessKeys(keys().access_key_id, "bad-secret-canary"), "AWS_SECRET_ACCESS_KEY_LENGTH"),
                  (AccessKeys(keys(temporary=True).access_key_id, "A" * 40), "AWS_SESSION_TOKEN_REQUIRED"),
                  (AccessKeys(keys().access_key_id, "A" * 40, "bad-secret-canary\n"), "AWS_SESSION_TOKEN_INVALID")]
         for material, code in cases:
             with self.assertRaises(AssistantError) as error: material.validate()
             self.assertEqual(error.exception.code, code); self.assertNotIn("bad-secret-canary", str(error.exception))
+
+    def test_forty_ascii_characters_include_slash_plus_equals_and_case(self):
+        secret = "aB09/+=x" * 5
+        material = AccessKeys(keys().access_key_id, secret)
+        material.validate()
+        self.assertTrue(secret_input_feedback(secret)[1])
+        self.assertNotIn(secret, secret_input_feedback(secret)[0])
+
+    def test_input_trims_only_outer_whitespace_and_reports_count_and_character_errors(self):
+        original = keys(temporary=True)
+        trimmed = AccessKeys.from_input(" \n" + original.access_key_id + "\t", "\r\n" + original.secret_access_key + " \n", " " + original.session_token + "\n")
+        self.assertEqual(trimmed, original); trimmed.validate()
+        for value, category in (("Ａ" + "a" * 39, "半角以外"), ("a" * 19 + " " + "b" * 20, "途中"),
+                                ("a" * 19 + "\u200b" + "b" * 20, "半角以外"), ("\"" + "a" * 39, "引用符")):
+            material = AccessKeys.from_input(original.access_key_id, value)
+            self.assertEqual(material.secret_access_key, value)
+            with self.assertRaises(AssistantError) as error: material.validate()
+            self.assertEqual(error.exception.code, "AWS_SECRET_ACCESS_KEY_INVALID")
+            feedback, valid = secret_input_feedback(value)
+            self.assertFalse(valid); self.assertIn("40 / 40", feedback); self.assertIn(category, feedback)
+            self.assertNotIn(value, feedback)
+        self.assertIn("39 / 40", secret_input_feedback("a" * 39)[0])
 
     @unittest.skipIf(os.name == "nt", "Symlink creation requires extra Windows privileges")
     def test_dangling_lock_and_vault_links_are_rejected_before_any_file_write(self):

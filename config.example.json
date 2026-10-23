@@ -59,6 +59,7 @@
     "timeout_seconds": 40,
     "max_output_tokens": 3000,
     "ca_bundle": "",
+    "proxy_url": "",
     "daily_calls": 100,
     "daily_tokens": 200000
   }

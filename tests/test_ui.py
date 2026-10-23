@@ -518,6 +518,51 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(len(list((self.home / "credentials").glob("*.bin"))), 1)
         self.assertFalse(any(v.get() for v in panel.secret_vars.values()))
 
+    def test_key_counter_explains_forty_character_rejection_then_trims_pasted_keys(self):
+        from test_credentials import keys
+        from work_assistant.model_catalog import CatalogResult
+        panel = self.access_key_panel(); material = keys()
+        self.fill_keys(panel, material)
+        panel.secret_vars["secret_access_key"].set("Ａ" + "a" * 39)
+        self.assertIn("40 / 40", panel.secret_feedback["text"])
+        with patch("work_assistant.ui_settings.list_models") as catalog:
+            panel.catalog_button.invoke(); self.settle(.05)
+        catalog.assert_not_called(); self.assertIn("半角以外", panel.status.get())
+        panel.secret_vars["access_key_id"].set(" \n" + material.access_key_id + "\t")
+        panel.secret_vars["secret_access_key"].set(" \r\n" + material.secret_access_key + "\n")
+        self.assertIn("形式は正しい", panel.secret_feedback["text"])
+        self.assertNotIn(material.secret_access_key, panel.secret_feedback["text"])
+        with patch("work_assistant.ui_settings.list_models", return_value=CatalogResult([], [])) as catalog:
+            panel.catalog_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(catalog.call_args.kwargs["client"].credentials, material)
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(self.rt.credentials.read(self.rt.cfg.bedrock.credential_ref), material)
+        self.assertIn("未入力", panel.secret_feedback["text"])
+
+    def test_proxy_settings_apply_to_catalog_save_and_show_network_failure_guidance(self):
+        from test_credentials import keys
+        from work_assistant.common import AssistantError
+        from work_assistant.model_catalog import CatalogResult, ModelChoice
+        from work_assistant.config import load
+        panel = self.access_key_panel(); self.fill_keys(panel, keys())
+        choice = ModelChoice("anthropic.claude-sonnet-4-6", "Claude", "converse", "モデル", ("ap-northeast-1",), "available")
+        with patch("work_assistant.ui_settings.list_models", return_value=CatalogResult([choice], [])):
+            panel.load_catalog(); self.wait(lambda: not panel.busy)
+        panel.vars["proxy_url"].set("http://proxy.example:8080")
+        self.assertFalse(panel.catalog_choices)
+        with patch("work_assistant.ui_settings.list_models", side_effect=AssistantError("BEDROCK_PROXY_AUTH_REQUIRED")) as catalog:
+            panel.load_catalog(); self.wait(lambda: not panel.busy)
+        self.assertEqual(catalog.call_args.args[0].proxy_url, "http://proxy.example:8080")
+        self.assertEqual(catalog.call_args.kwargs["client"].settings.proxy_url, "http://proxy.example:8080")
+        self.assertIn("407", panel.status.get()); self.assertIn("AWSキーのエラーではありません", panel.catalog_label["text"])
+        self.assertNotIn("ListFoundationModels", panel.catalog_label["text"])
+        panel.save_button.invoke(); self.wait(lambda: not panel.busy)
+        self.assertEqual(load(self.home).bedrock.proxy_url, "http://proxy.example:8080")
+        panel.vars["proxy_url"].set("http://proxy.example/settings.pac")
+        with patch("work_assistant.ui_settings.list_models") as catalog:
+            panel.load_catalog(); self.settle(.05)
+        catalog.assert_not_called(); self.assertTrue(panel.advanced.get()); self.assertIn("PAC", panel.status.get())
+
     def test_access_key_partial_input_and_missing_session_token_never_start_network(self):
         from test_credentials import keys
         panel = self.access_key_panel()

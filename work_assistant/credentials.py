@@ -28,12 +28,38 @@ class AccessKeys:
     def validate(self):
         if not isinstance(self.access_key_id, str) or not re.fullmatch(r"[A-Z0-9]{16,128}", self.access_key_id):
             raise AssistantError("AWS_ACCESS_KEY_ID_INVALID")
-        if not isinstance(self.secret_access_key, str) or not re.fullmatch(r"[A-Za-z0-9/+=]{40}", self.secret_access_key):
+        if not isinstance(self.secret_access_key, str):
+            raise AssistantError("AWS_SECRET_ACCESS_KEY_INVALID")
+        if len(self.secret_access_key) != 40:
+            raise AssistantError("AWS_SECRET_ACCESS_KEY_LENGTH")
+        if not re.fullmatch(r"[A-Za-z0-9/+=]{40}", self.secret_access_key):
             raise AssistantError("AWS_SECRET_ACCESS_KEY_INVALID")
         if not isinstance(self.session_token, str) or len(self.session_token) > 16384 or any(not 33 <= ord(c) <= 126 for c in self.session_token):
             raise AssistantError("AWS_SESSION_TOKEN_INVALID")
         if self.access_key_id.startswith("ASIA") and not self.session_token:
             raise AssistantError("AWS_SESSION_TOKEN_REQUIRED")
+
+    @classmethod
+    def from_input(cls, access_key_id: str, secret_access_key: str, session_token=""):
+        # Copying from AWS/CSV often includes a final newline or outer spaces.
+        # Never normalize case, full-width characters or whitespace inside a key.
+        return cls(*(value.strip() for value in (access_key_id, secret_access_key, session_token)))
+
+
+def secret_input_feedback(value: str) -> tuple[str, bool]:
+    """Only counts and static categories may appear in the UI; never key text."""
+    normalized = value.strip()
+    if not value: return "未入力。Secret Access Keyは半角40文字です。", False
+    prefix = f"入力: {len(normalized)} / 40文字。\n"
+    if value != normalized: prefix += "前後の空白・改行は除いて使用します。"
+    if any(not c.isascii() for c in normalized):
+        return prefix + "全角文字などの半角以外の文字が含まれています。発行元からコピーし直してください。", False
+    if any(c.isspace() or ord(c) < 33 or ord(c) == 127 for c in normalized):
+        return prefix + "途中に空白・改行・不可視文字が含まれています。発行元からコピーし直してください。", False
+    if re.search(r"[^A-Za-z0-9/+=]", normalized):
+        return prefix + "使用できる文字は半角英数字と / + = です。引用符や項目名を含めずコピーしてください。", False
+    if len(normalized) != 40: return prefix + "40文字必要です。", False
+    return prefix + "入力形式は正しいです。AWSでの有効性は接続時に確認します。", True
 
 
 class _Blob(ctypes.Structure):

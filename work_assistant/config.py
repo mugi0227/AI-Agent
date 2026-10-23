@@ -28,6 +28,7 @@ class BedrockSettings:
     timeout_seconds: int = 40
     max_output_tokens: int = 3000
     ca_bundle: str = ""
+    proxy_url: str = ""
     daily_calls: int = 100
     daily_tokens: int = 200000
 
@@ -111,7 +112,7 @@ class Settings:
         if not isinstance(self.memory_embedding_model, str) or len(self.memory_embedding_model) > 4000:
             raise AssistantError("CONFIG_STRING")
         b = self.bedrock
-        for name in ("endpoint", "region", "model", "auth", "profile", "credential_ref", "api_key_env", "reasoning_effort", "ca_bundle"):
+        for name in ("endpoint", "region", "model", "auth", "profile", "credential_ref", "api_key_env", "reasoning_effort", "ca_bundle", "proxy_url"):
             if not isinstance(getattr(b, name), str) or len(getattr(b, name)) > 4000:
                 raise AssistantError("CONFIG_STRING")
         for name in ("enabled", "data_transfer_approved", "cross_region_approved", "encrypted_reasoning", "streaming"):

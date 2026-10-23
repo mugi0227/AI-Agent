@@ -11,7 +11,8 @@ from .chat import error_help
 from .common import AssistantError, safe_code, stamp
 from .config import minute_of_day
 from .bedrock import BedrockClient
-from .credentials import AccessKeys
+from .credentials import AccessKeys, secret_input_feedback
+from .network import validate_proxy_url
 from .security import expanded, model_api, validate_bedrock
 from .model_catalog import list_models
 from .setup_flow import SetupError, connection_fingerprint, probe_connection, validate_setup
@@ -131,6 +132,9 @@ class SettingsPanel:
             widget = entry(row, var, show="●", exportselection=False); widget.pack(fill="x", ipady=7, pady=(4, 0))
             var.trace_add("write", self.secret_changed)
             self.fields[name], self.field_tabs[name] = widget, 1; self.inputs.append(widget)
+            if name == "secret_access_key":
+                self.secret_feedback = label(row, secret_input_feedback("")[0], size=9, fg=MUTED, bg=WHITE, wraplength=620, justify="left")
+                self.secret_feedback.pack(fill="x", pady=(4, 0))
         bar = tk.Frame(self.key_frame, bg=WHITE); bar.pack(fill="x", pady=(0, 12))
         self.show_keys = tk.BooleanVar(value=False)
         show = tk.Checkbutton(bar, text="入力値を表示", variable=self.show_keys, command=self.toggle_keys,
@@ -154,25 +158,26 @@ class SettingsPanel:
         label(parent, "地域をまたぐ推論プロファイルでは処理地域の許可も必要です。Claudeのリージョン内モデルでは不要です。", size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x", pady=(0, 14))
         self.advanced = tk.BooleanVar(value=False)
         advanced = tk.Frame(parent, bg=WHITE)
-        toggle = tk.Checkbutton(parent, text="接続先・証明書・利用上限を表示", variable=self.advanced, bg=WHITE, font=(self.app.root.ui_font, 10), command=lambda: advanced.pack(fill="x") if self.advanced.get() else advanced.pack_forget())
+        toggle = tk.Checkbutton(parent, text="接続先・プロキシ・証明書・利用上限を表示", variable=self.advanced, bg=WHITE, font=(self.app.root.ui_font, 10), command=lambda: advanced.pack(fill="x") if self.advanced.get() else advanced.pack_forget())
         toggle.pack(anchor="w", pady=(0, 10)); self.inputs.append(toggle)
         # Optional fields use the same validation and persistence as the main form.
         for name, title, value, hint in (
             ("endpoint", "接続先URL", cfg.endpoint, "会社指定のBedrock Runtime / Mantle URL。HTTPSの検証は常に有効です。"),
+            ("proxy_url", "社内プロキシURL（任意）", cfg.proxy_url, "例: http://proxy.example:8080。空欄は環境変数とWindowsの既定設定を使用します。PAC・ブラウザの統合認証は自動で引き継ぎません。ID・パスワードは入力しないでください。"),
             ("ca_bundle", "会社のCA証明書ファイル（任意）", cfg.ca_bundle, "空欄はOS・Pythonの既定の信頼設定を使用します。"),
             ("daily_calls", "1日のAI呼び出し上限", cfg.daily_calls, "接続テストも最大2回分を使用します。"),
             ("daily_tokens", "1日のトークン上限", cfg.daily_tokens, "")):
             row = tk.Frame(advanced, bg=WHITE); row.pack(fill="x", pady=(0, 12))
             label(row, title, bold=True, bg=WHITE).pack(anchor="w")
             widget = entry(row, self.variable(name, value)); widget.pack(fill="x", ipady=7, pady=4)
-            if hint: label(row, hint, size=9, fg=MUTED, bg=WHITE, wraplength=620).pack(fill="x")
+            if hint: label(row, hint, size=9, fg=MUTED, bg=WHITE, wraplength=620, justify="left").pack(fill="x")
             self.fields[name], self.field_tabs[name] = widget, 1; self.inputs.append(widget)
         self.advanced_frame = advanced
         self._last_region = cfg.region
         self.vars["region"].trace_add("write", self.region_changed)
         self.vars["auth"].trace_add("write", self.auth_changed)
         self.vars["model"].trace_add("write", self.model_changed)
-        for name in ("region", "auth", "profile", "api_key_env", "ca_bundle"):
+        for name in ("region", "auth", "profile", "api_key_env", "ca_bundle", "proxy_url"):
             self.vars[name].trace_add("write", self.invalidate_catalog)
         self.auth_changed()
         button(parent, "次へ：接続確認", lambda: self.tabs.select(2)).pack(anchor="e", pady=10)
@@ -194,12 +199,18 @@ class SettingsPanel:
         if self.clearing_secrets: return
         self.secret_revision += 1; self.delete_credentials = False
         self.changed(); self.invalidate_catalog(); self.refresh_key_status()
+        self.refresh_secret_feedback()
+
+    def refresh_secret_feedback(self):
+        text, valid = secret_input_feedback(self.secret_vars["secret_access_key"].get())
+        self.secret_feedback.configure(text=text, fg=ACCENT if valid else ERROR if self.secret_vars["secret_access_key"].get() else MUTED)
 
     def clear_secret_inputs(self):
         self.clearing_secrets = True
         try:
             for var in self.secret_vars.values(): var.set("")
             self.show_keys.set(False); self.toggle_keys()
+            self.refresh_secret_feedback()
         finally: self.clearing_secrets = False
 
     def refresh_key_status(self):
@@ -217,17 +228,18 @@ class SettingsPanel:
 
     def collect_credentials(self, *, allow_cleanup=False):
         if self.vars["auth"].get() != AUTH_NAMES["access_keys"]: return None
-        values = [v.get() for v in self.secret_vars.values()]
+        values = [v.get().strip() for v in self.secret_vars.values()]
         if not any(values):
             if not self.base.bedrock.credential_ref or self.delete_credentials:
                 if allow_cleanup and self.cleanup_pending: return None
                 raise SetupError("access_key_id", "Access Key IDとSecret Access Keyを入力してください。")
             return None
-        keys = AccessKeys(*(self.secret_vars[n].get() for n in ("access_key_id", "secret_access_key", "session_token")))
+        keys = AccessKeys.from_input(*(self.secret_vars[n].get() for n in ("access_key_id", "secret_access_key", "session_token")))
         try: keys.validate()
         except AssistantError as error:
             field = "access_key_id" if "ID_INVALID" in error.code else "secret_access_key" if "SECRET" in error.code else "session_token"
-            raise SetupError(field, error_help(error.code)[1]) from None
+            message = secret_input_feedback(self.secret_vars["secret_access_key"].get())[0] if field == "secret_access_key" else error_help(error.code)[1]
+            raise SetupError(field, message) from None
         return keys
 
     def region_changed(self, *_):
@@ -249,7 +261,7 @@ class SettingsPanel:
             if endpoint.get() != target: endpoint.set(target)
 
     def catalog_key(self):
-        return tuple(self.vars[n].get().strip() for n in ("region", "auth", "profile", "api_key_env", "ca_bundle")) + (str(self.secret_revision),)
+        return tuple(self.vars[n].get().strip() for n in ("region", "auth", "profile", "api_key_env", "ca_bundle", "proxy_url")) + (str(self.secret_revision),)
 
     def invalidate_catalog(self, *_):
         if self.catalog_context is not None and self.catalog_key() != self.catalog_context:
@@ -260,10 +272,13 @@ class SettingsPanel:
     def load_catalog(self):
         if self.busy: return
         cfg = copy.deepcopy(self.base.bedrock)
-        for name in ("region", "profile", "api_key_env", "ca_bundle"):
+        for name in ("region", "profile", "api_key_env", "ca_bundle", "proxy_url"):
             setattr(cfg, name, self.vars[name].get().strip())
         cfg.auth = next((k for k, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
-        try: keys = self.collect_credentials()
+        try:
+            try: validate_proxy_url(cfg.proxy_url)
+            except AssistantError: raise SetupError("proxy_url", error_help("BEDROCK_PROXY_INVALID")[1]) from None
+            keys = self.collect_credentials()
         except SetupError as error:
             self.show_error(error.message, error.field); return
         client = BedrockClient(cfg, credential_store=self.rt.credentials, credentials=keys) if cfg.auth == "access_keys" else None
@@ -296,9 +311,10 @@ class SettingsPanel:
             self.status.set("取得中に接続設定が変わりました。モデル一覧を再取得してください。")
         elif error:
             title, help_text = error_help(error)
-            self.catalog_label.configure(text=title + "。" + help_text + " 一覧取得にはListFoundationModels・ListInferenceProfilesの権限が必要です。IDの手入力もできます。", fg=ERROR)
+            permission_hint = " 一覧取得にはListFoundationModels・ListInferenceProfilesの権限が必要です。" if error == "BEDROCK_ACCESS_DENIED" else ""
+            self.catalog_label.configure(text=title + "。" + help_text + permission_hint + " IDの手入力もできます。", fg=ERROR)
             self.model_selection.set("一覧を取得できませんでした。再取得またはIDの手入力ができます")
-            self.status.set("モデル一覧を取得できませんでした。認証・地域・一覧取得の権限を確認してください。")
+            self.status.set(title + "。" + help_text)
         else:
             self.catalog_context = key; self.catalog_choices = result.choices
             self.model_combo.configure(values=[c.title for c in result.choices])
@@ -356,7 +372,7 @@ class SettingsPanel:
                 if not low <= value <= high: raise ValueError()
             except ValueError: raise SetupError(name, f"{low:,}〜{high:,}の整数を入力してください。") from None
             setattr(target, name, value)
-        for name in ("enabled", "data_transfer_approved", "cross_region_approved", "region", "model", "profile", "api_key_env", "endpoint", "ca_bundle"):
+        for name in ("enabled", "data_transfer_approved", "cross_region_approved", "region", "model", "profile", "api_key_env", "endpoint", "ca_bundle", "proxy_url"):
             value = self.vars[name].get(); setattr(cfg.bedrock, name, value.strip() if isinstance(value, str) else value)
         cfg.bedrock.auth = next((key for key, title in AUTH_NAMES.items() if title == self.vars["auth"].get()), "")
         if self.delete_credentials: cfg.bedrock.credential_ref = ""
@@ -373,7 +389,7 @@ class SettingsPanel:
         self.status.set(message); self.status_label.configure(fg=ERROR)
         if field in self.fields:
             index = self.field_tabs[field]; self.tabs.select(index)
-            if field in ("endpoint", "ca_bundle", "daily_calls", "daily_tokens"):
+            if field in ("endpoint", "ca_bundle", "proxy_url", "daily_calls", "daily_tokens"):
                 self.advanced.set(True); self.advanced_frame.pack(fill="x")
             widget = self.fields[field]
             def reveal():
@@ -452,7 +468,7 @@ class SettingsPanel:
             code, message, field = error
             title, help_text = error_help(code)
             if code == "SETTINGS_BUSY": help_text = "回答・資料の取り込み・継続タスクの処理が終わってから、もう一度保存してください。入力内容は保持しています。"
-            elif not saved and not message and code not in ("SETTINGS_CHANGED", "CREDENTIAL_PATH_INVALID", "CREDENTIAL_STORAGE_UNSUPPORTED", "CREDENTIAL_STORE_FAILED", "AWS_ACCESS_KEY_ID_INVALID", "AWS_SECRET_ACCESS_KEY_INVALID", "AWS_SESSION_TOKEN_REQUIRED", "AWS_SESSION_TOKEN_INVALID"):
+            elif not saved and not message and code not in ("SETTINGS_CHANGED", "CREDENTIAL_PATH_INVALID", "CREDENTIAL_STORAGE_UNSUPPORTED", "CREDENTIAL_STORE_FAILED", "AWS_ACCESS_KEY_ID_INVALID", "AWS_SECRET_ACCESS_KEY_INVALID", "AWS_SECRET_ACCESS_KEY_LENGTH", "AWS_SESSION_TOKEN_REQUIRED", "AWS_SESSION_TOKEN_INVALID"):
                 help_text = "設定を保存できませんでした。保存先の空き容量と書き込み権限を確認して再試行してください。入力内容と元の設定は保持しています。"
             self.show_error(message or (title + "。" + help_text), field)
         elif test:

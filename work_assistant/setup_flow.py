@@ -12,6 +12,7 @@ from .bedrock import BedrockClient, response_text
 from .common import AssistantError, canonical, digest
 from .config import Settings
 from .credentials import CredentialStore
+from .network import validate_proxy_url
 from .security import DENIED_PARTS, expanded, is_link_or_junction, validate_bedrock
 from .tools import function, string
 
@@ -39,6 +40,9 @@ def validate_setup(cfg: Settings, home: Path) -> None:
             raise SetupError("roots", "資料フォルダにアクセスできません。場所とアクセス権を確認してください。") from None
     if cfg.bedrock.auth == "api_key" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cfg.bedrock.api_key_env):
         raise SetupError("api_key_env", "キー本体ではなく、キーを登録した環境変数名を入力してください。")
+    try: validate_proxy_url(cfg.bedrock.proxy_url)
+    except AssistantError:
+        raise SetupError("proxy_url", "http://proxy.example:8080 の形式で入力してください。PACファイルやID・パスワードを含むURLは指定できません。") from None
     try:
         validate_bedrock(cfg.bedrock, live=False)
     except AssistantError as error:

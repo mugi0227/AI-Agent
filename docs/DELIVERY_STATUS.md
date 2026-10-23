@@ -1,6 +1,8 @@
 # 納品・リポジトリ反映状況
 
-2026-10-23 / v0.5.0更新。
+2026-10-23 / v0.5.1更新。
+
+Secret Access Keyの文字数と文字種を区別し、前後の空白・改行を除いて使用する入力補助を追加。社内プロキシURLの指定、407・証明書・名前解決・タイムアウトの分類を追加。[入力と社内ネットワーク設定](ACCESS_KEYS.md)を参照。
 
 Access Key ID・Secret Access Key・Session Tokenの直接入力、Windows DPAPIでの暗号化保存、更新・削除を追加。モデル一覧と両モデルAPIに同じ署名を使用。[認証の設定と保存](ACCESS_KEYS.md)を参照。
 

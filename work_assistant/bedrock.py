@@ -17,6 +17,7 @@ from typing import Callable
 from .common import AssistantError, canonical
 from .config import BedrockSettings
 from .credentials import AccessKeys
+from .network import network_error_code, validate_proxy_url
 from .security import model_api, validate_bedrock
 from . import converse
 
@@ -128,13 +129,21 @@ class BedrockClient:
 
     def _request(self, url, payload=None, *, service="bedrock", method="POST", stream=None, on_delta=None, timeout=None):
         cfg = self.settings
+        proxy = validate_proxy_url(cfg.proxy_url)
         body = canonical(payload).encode("utf-8") if payload is not None else None
         accept = "application/vnd.amazon.eventstream" if stream == "converse" else "text/event-stream" if stream == "responses" else "application/json"
         headers = self._headers(url, body, service, method, accept)
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            context = ssl.create_default_context(cafile=cfg.ca_bundle or None)
-            opener = self._opener or urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=context))
+            try:
+                context = ssl.create_default_context(cafile=cfg.ca_bundle or None)
+            except (OSError, ValueError):
+                raise AssistantError("BEDROCK_CA_BUNDLE_INVALID") from None
+            handlers = [NoRedirect(), urllib.request.HTTPSHandler(context=context)]
+            if proxy: handlers.append(urllib.request.ProxyHandler({"https": proxy}))
+            # Empty proxy_url preserves urllib's environment / Windows proxy
+            # discovery. No process-wide environment mutation or TLS bypass.
+            opener = self._opener or urllib.request.build_opener(*handlers)
             with opener.open(request, timeout=timeout or cfg.timeout_seconds) as response:
                 content_type = response.headers.get("Content-Type", "")
                 if stream == "converse":
@@ -152,7 +161,9 @@ class BedrockClient:
             return result
         except urllib.error.HTTPError as error:
             # Never expose raw error body: providers may echo prompts or credentials.
-            if error.code in (401, 403):
+            if error.code == 407:
+                code = "BEDROCK_PROXY_AUTH_REQUIRED"
+            elif error.code in (401, 403):
                 code = "BEDROCK_ACCESS_DENIED"
             elif error.code == 429:
                 code = "BEDROCK_THROTTLED"
@@ -163,8 +174,8 @@ class BedrockClient:
             raise AssistantError(code, f"HTTP {error.code}。認証・モデル・API・管理ポリシーを検証してください", retryable=error.code in (429, 500, 502, 503, 504)) from None
         except AssistantError:
             raise
-        except (urllib.error.URLError, ssl.SSLError, TimeoutError, OSError):
-            raise AssistantError("BEDROCK_NETWORK_OR_TLS", "接続/社内proxy/証明書を確認してください。TLS検証は無効化しません", retryable=True) from None
+        except (urllib.error.URLError, ssl.SSLError, TimeoutError, OSError) as error:
+            raise AssistantError(network_error_code(error), retryable=True) from None
         except (UnicodeError, ValueError, TypeError):
             raise AssistantError("MODEL_RESPONSE_INVALID") from None
 
